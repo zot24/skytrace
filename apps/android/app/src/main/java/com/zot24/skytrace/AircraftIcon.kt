@@ -47,9 +47,10 @@ fun aircraftIcon(context: Context, kind: Silhouette): Bitmap {
                 if (d < best) best = d
             }
         }
-        val signed = if (me) best - 0.5f else -(best - 0.5f)
-        val a = (192f + signed * 16f).coerceIn(0f, 255f).toInt()
-        out[y * SIZE + x] = (a shl 24) or 0xFFFFFF
+        // Inside rises to opaque. Outside falls to zero within REACH pixels, which is the room the halo has.
+        val a = if (me) (192f + (best - 0.5f) * 24f) else (192f - (best - 0.5f) * 48f)
+        val alpha = a.coerceIn(0f, 255f).toInt()
+        out[y * SIZE + x] = (alpha shl 24) or 0xFFFFFF
     }
     mask.setPixels(out, 0, SIZE, 0, 0, SIZE, SIZE)
     return mask
