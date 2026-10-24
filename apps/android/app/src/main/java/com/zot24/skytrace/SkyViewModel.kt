@@ -84,7 +84,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val prefs = getApplication<Application>().store.data.first()
             applyPrefs(prefs[keyUrl], prefs[keyAircraft], prefs[keyAirports])
-            val saved = parseCamera(prefs[keyCamera])
+            val saved = parseCamera(SyntheticTraffic.camera.takeIf { BuildConfig.DEBUG } ?: prefs[keyCamera])
             val cam = saved ?: BUSY_OPENING
             lastSavedCamera = if (saved != null) formatCamera(cam) else null
             cameraWritable = true

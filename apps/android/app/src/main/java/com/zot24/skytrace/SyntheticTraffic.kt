@@ -9,6 +9,9 @@ object SyntheticTraffic {
     /** Plane count, set from the `synthetic` intent extra in debug builds. 0 means real data. */
     @Volatile var planes = 0
 
+    /** Opening camera "lat,lon,zoom" from the `camera` extra, for repeatable perf runs. */
+    @Volatile var camera: String? = null
+
     private const val LOOP_MS = 30 * 60_000L
     private val types = listOf("B738", "A320", "A321", "B77W", "A359", "E75L", "CRJ9", "B789", "C172", "DH8D")
     private val categories = listOf("A3", "A3", "A3", "A5", "A5", "A3", "A3", "A5", "A1", "A2")
