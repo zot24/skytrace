@@ -204,6 +204,16 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun fetchOnce(): Long {
+        if (BuildConfig.DEBUG && SyntheticTraffic.planes > 0) {
+            val now = System.currentTimeMillis()
+            val rows = withContext(Dispatchers.Default) { SyntheticTraffic.rows(now) }
+            fleet.accept(rows, now, fresh = true)
+            source = "synthetic"
+            count = fleet.tracked(now)
+            refreshDetail(now)
+            logCount(rows.size, false)
+            return 5_000L
+        }
         val base = baseUrl
         val view = box
         val url = if (view == null) {

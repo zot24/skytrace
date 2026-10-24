@@ -9,6 +9,7 @@ import org.maplibre.android.MapLibre
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (BuildConfig.DEBUG) SyntheticTraffic.planes = intent.getIntExtra("synthetic", 0)
         MapLibre.getInstance(this)
         enableEdgeToEdge()
         setContent {
