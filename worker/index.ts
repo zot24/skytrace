@@ -1,4 +1,4 @@
-type Ac = [string, string, number, number, number, number, number, string, string];
+type Ac = [string, string, number, number, number, number, number, string, string, string];
 
 type Bbox = { south: number; north: number; west: number; east: number };
 
@@ -20,6 +20,7 @@ type AdsbAc = {
   true_heading?: number | null;
   t?: string | null;
   r?: string | null;
+  category?: string | null;
   seen_pos?: number | null;
   lastPosition?: { lat?: number; lon?: number; seen_pos?: number } | null;
 };
@@ -260,6 +261,7 @@ function fromAdsb(ac: AdsbAc): Ac | null {
     wrap360(track),
     (ac.t || '').trim(),
     (ac.r || '').trim(),
+    (ac.category || '').trim(),
   ];
 }
 
@@ -298,6 +300,7 @@ function fromOpenSky(state: unknown[]): Ac | null {
     onGround ? 0 : Math.round(altM * 3.28084),
     Math.round((num(state[9]) ?? 0) * 1.94384),
     wrap360(track),
+    '',
     '',
     '',
   ];
