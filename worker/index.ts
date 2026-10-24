@@ -38,7 +38,7 @@ const TILES: Array<[number, number]> = [
   [-37.7, 145.0], [52.0, -30.0], [48.0, -15.0], [30.0, -45.0], [20.0, 160.0],
 ];
 
-const TILE_TTL_MS = 120_000;
+const AREA_CAP = 96;
 const BATCH = 3;
 const BACKOFF_BASE_MS = 2_000;
 const BACKOFF_CAP_MS = 60_000;
@@ -204,7 +204,7 @@ async function refresh(list: Array<[number, number]>): Promise<{ rateLimited: bo
       const prev = tiles.get(id);
       if (prev && Date.now() - prev.at < 5000) continue;
       try {
-        tiles.set(id, { at: Date.now(), ac: await adsbTile(round1(lat), round1(lon)) });
+        putArea(id, await adsbTile(round1(lat), round1(lon)));
       } catch (error) {
         if (statusOf(error) === 429) rateLimited = true;
         // Keep the previous tile when a single upstream call fails.
@@ -216,14 +216,25 @@ async function refresh(list: Array<[number, number]>): Promise<{ rateLimited: bo
   return { rateLimited };
 }
 
-function collect(): Ac[] {
-  const now = Date.now();
-  const byHex = new Map<string, Ac>();
-  for (const [id, hit] of tiles) {
-    if (now - hit.at > TILE_TTL_MS) {
-      tiles.delete(id);
-      continue;
+function putArea(id: string, ac: Ac[]): void {
+  tiles.set(id, { at: Date.now(), ac });
+  while (tiles.size > AREA_CAP) {
+    let oldestId: string | null = null;
+    let oldestAt = Infinity;
+    for (const [key, hit] of tiles) {
+      if (hit.at < oldestAt) {
+        oldestAt = hit.at;
+        oldestId = key;
+      }
     }
+    if (oldestId == null) break;
+    tiles.delete(oldestId);
+  }
+}
+
+function collect(): Ac[] {
+  const byHex = new Map<string, Ac>();
+  for (const hit of tiles.values()) {
     for (const ac of hit.ac) byHex.set(ac[0], ac);
   }
   return [...byHex.values()];
