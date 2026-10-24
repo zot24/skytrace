@@ -15,7 +15,7 @@ cd apps/android
 
 The debug APK is `app/build/outputs/apk/debug/app-debug.apk`.
 
-The manifest allows cleartext HTTP. The default worker URL is `http://10.0.2.2:8787`, which is the host machine from an Android emulator. Tap the credit line to open About and change that URL. From the repo root, `npm run dev` serves the worker on port 8787.
+Cleartext HTTP is allowed only for `10.0.2.2`, `localhost`, and `127.0.0.1`. The default worker URL is `http://10.0.2.2:8787`, which is the host machine from an Android emulator. Tap the credit line to open About and change that URL. From the repo root, `npm run dev` serves the worker on port 8787.
 
 Airport search reads `public/airports.json`. The Gradle build copies that file into the app assets.
 
