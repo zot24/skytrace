@@ -29,6 +29,7 @@ const NM_PER_DEG = 60;
 const byHex = new Map<string, Craft>();
 const tracks = new Map<string, [number, number, number][]>();
 let list: Craft[] = [];
+let freeze = false;
 
 const TRACK_CAP = 180;
 const TRACK_MIN_DEG = 0.0015;
@@ -63,7 +64,7 @@ export function trackOf(hex: string): readonly [number, number, number][] {
 
 export function positionAt(craft: Craft, now: number): { lat: number; lon: number } {
   const dt = (now - craft.t) / 1000;
-  if (dt === 0 || craft.gs <= 0) return { lat: craft.lat, lon: craft.lon };
+  if (freeze || dt === 0 || craft.gs <= 0) return { lat: craft.lat, lon: craft.lon };
   const distNm = craft.gs * (dt / 3600);
   const rad = craft.track * DEG;
   const dLat = (distNm * Math.cos(rad)) / NM_PER_DEG;
@@ -128,9 +129,11 @@ export function applyFeedBody(
 ): { fresh: boolean; src: string } {
   const fresh = !!body && ok && !body.stale && body.src !== 'none' && (body.ac?.length ?? 0) > 0;
   if (fresh && body?.ac) {
+    freeze = false;
     replaceAll(body.ac, now);
     return { fresh: true, src: body.src || 'adsb.lol' };
   }
+  freeze = true;
   if (body?.ac?.length) {
     replaceAll(body.ac, now);
     const src = body.src && body.src !== 'none' ? body.src : '';

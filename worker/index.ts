@@ -41,6 +41,7 @@ const TILE_TTL_MS = 120_000;
 const BATCH = 3;
 const BACKOFF_BASE_MS = 2_000;
 const BACKOFF_CAP_MS = 60_000;
+const OPENSKY_TTL_MS = 15_000;
 const tiles = new Map<string, { at: number; ac: Ac[] }>();
 let cursor = 0;
 let failStreak = 0;
@@ -71,23 +72,16 @@ export default {
     }
 
     const now = Date.now();
+    const bbox = readBbox(cacheUrl);
     if (now < backoffUntil) {
-      const retryAfterMs = holdBackoff(simulate ? 'simulated 429 holding' : 'upstream 429 holding');
-      return respond(rememberTiles(), true, retryAfterMs, null);
+      return replyLimited(bbox, simulate ? null : cacheKey, false, simulate ? 'simulated 429 holding' : 'upstream 429 holding');
     }
 
-    const bbox = readBbox(cacheUrl);
-    if (simulate) {
-      const retryAfterMs = scheduleBackoff('simulated 429');
-      return respond(rememberTiles(), true, retryAfterMs, null);
-    }
+    if (simulate) return replyLimited(bbox, null, true, 'simulated 429');
 
     try {
       const outcome = await refresh(bbox ? cover(bbox) : nextBatch());
-      if (outcome.rateLimited) {
-        const retryAfterMs = scheduleBackoff('upstream 429');
-        return respond(rememberTiles(), true, retryAfterMs, null);
-      }
+      if (outcome.rateLimited) return replyLimited(bbox, cacheKey, true, 'upstream 429');
       const ac = collect();
       if (ac.length === 0) throw new UpstreamError(502, 'adsb.lol returned no aircraft');
       lastGood = { src: 'adsb.lol', ac, at: Date.now() };
@@ -95,21 +89,15 @@ export default {
       backoffUntil = 0;
       return respond(lastGood, false, 0, cacheKey);
     } catch (error) {
-      if (statusOf(error) === 429) {
-        const retryAfterMs = scheduleBackoff('upstream 429');
-        return respond(rememberTiles(), true, retryAfterMs, null);
-      }
-      try {
-        const ac = await openSky(bbox);
-        lastGood = { src: 'opensky', ac, at: Date.now() };
+      if (statusOf(error) === 429) return replyLimited(bbox, cacheKey, true, 'upstream 429');
+      const sky = await openSkyFallback(bbox);
+      if (sky) {
         failStreak = 0;
         backoffUntil = 0;
-        return respond(lastGood, false, 0, cacheKey);
-      } catch (skyError) {
-        const reason = statusOf(skyError) === 429 ? 'upstream 429' : 'upstream failure';
-        const retryAfterMs = scheduleBackoff(reason);
-        return respond(rememberTiles(), true, retryAfterMs, null);
+        return respond(sky, false, 0, cacheKey);
       }
+      const retryAfterMs = scheduleBackoff('upstream failure');
+      return respond(rememberTiles(), true, retryAfterMs, null);
     }
   },
 };
@@ -139,6 +127,38 @@ function holdBackoff(reason: string): number {
   return delay;
 }
 
+async function openSkyFallback(bbox: Bbox | null): Promise<Snapshot | null> {
+  const at = Date.now();
+  if (lastGood?.src === 'opensky' && at - lastGood.at < OPENSKY_TTL_MS) return lastGood;
+  try {
+    const incoming = await openSky(bbox);
+    const byHex = new Map<string, Ac>();
+    for (const row of lastGood?.ac ?? []) byHex.set(row[0], row);
+    for (const row of incoming) byHex.set(row[0], row);
+    lastGood = { src: 'opensky', ac: [...byHex.values()], at };
+    return lastGood;
+  } catch {
+    return null;
+  }
+}
+
+async function replyLimited(
+  bbox: Bbox | null,
+  cacheKey: Request | null,
+  schedule: boolean,
+  reason: string,
+): Promise<Response> {
+  const retryAfterMs = schedule ? scheduleBackoff(reason) : holdBackoff(reason);
+  const sky = await openSkyFallback(bbox);
+  if (sky) {
+    // Keep adsb.lol in backoff. Clearing it retries the 429 on the next poll.
+    const until = sky.at + OPENSKY_TTL_MS;
+    if (backoffUntil < until) backoffUntil = until;
+    return respond(sky, false, 0, cacheKey);
+  }
+  return respond(rememberTiles(), true, retryAfterMs, null);
+}
+
 function rememberTiles(): Snapshot | null {
   const ac = collect();
   if (ac.length && (!lastGood || ac.length >= lastGood.ac.length)) {
@@ -155,7 +175,9 @@ function respond(snap: Snapshot | null, stale: boolean, retryAfterMs: number, ca
     'content-type': 'application/json; charset=utf-8',
     'cache-control': stale ? 'no-store' : 'public, max-age=5',
     'access-control-allow-origin': '*',
+    'access-control-expose-headers': 'x-skytrace-source',
     'x-cached-at': String(Date.now()),
+    'x-skytrace-source': src,
   };
   if (stale) headers['retry-after'] = String(Math.max(1, Math.ceil(retryAfterMs / 1000)));
   const res = new Response(JSON.stringify({

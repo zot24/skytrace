@@ -26,11 +26,11 @@ Typechecks, builds, and runs a headless Playwright smoke test (synthetic traffic
 The code is MIT. The data is not, and it is not all licensed the same way.
 
 - **adsb.lol** is the primary feed. The API and the data it publishes are ODbL. If you build a derived database from it, that database stays share-alike. There is no world snapshot (`/v2/all` is gone). `/api/planes` walks `https://api.adsb.lol/v2/point/{lat}/{lon}/250` — 250 nautical miles is the maximum radius — a few tiles per refresh, and keeps a short-lived tile cache. Upstream answers 429 if you request faster than that. Ask them before production use; an API key may be required later.
-- **OpenSky Network** is the fallback (`/api/states/all`) when adsb.lol returns nothing. OpenSky data is non-commercial only, and anonymous calls are rate limited. It has callsign, altitude, speed, and heading, not aircraft type or registration.
+- **OpenSky Network** is the fallback (`/api/states/all`) when adsb.lol returns nothing or responds 429. OpenSky data is non-commercial only, and anonymous calls are rate limited. It has callsign, altitude, speed, and heading, not aircraft type or registration.
 - **OurAirports** supplies the large and medium airports. The dataset is public domain, with no warranty.
 - The basemap is **OpenFreeMap**’s dark style, © **OpenStreetMap** contributors. Those credits, plus the feed credits, stay visible in the map.
 
-`/api/planes` is cached for about 5 seconds with the Cache API. The browser dead-reckons between those updates from ground speed and heading.
+`/api/planes` is cached for about 5 seconds with the Cache API. The response `src` field and the `x-skytrace-source` header name the feed in use. The map dead-reckons between fresh updates from ground speed and heading. A stale frame stays on the last fix.
 
 ## Android
 

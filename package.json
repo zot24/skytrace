@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1 --port 4173",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.worker.json",
-    "check": "npm run typecheck && npm run build && node scripts/smoke.mjs",
+    "check": "npm run typecheck && npm run build && node scripts/smoke.mjs && node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./scripts/register-ts.mjs scripts/stale-feed.mjs",
     "airports": "node scripts/build-airports.mjs"
   },
   "dependencies": {

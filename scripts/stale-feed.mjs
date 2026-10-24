@@ -157,6 +157,20 @@ for (const craft of web.craftList()) {
 }
 check('web positions stay on the fix', webHeld === 14, `held=${webHeld} of ${web.craftList().length}`);
 
+const kept = mobile.craftList().length;
+mobile.applyFeedBody({ src: 'opensky', ac: [], stale: true }, true, t0);
+const first = mobile.craftList()[0];
+const pinned = first ? mobile.positionAt(first, t0 + 180_000) : { lat: 0, lon: 0 };
+check(
+  'empty stale keeps the planes',
+  mobile.craftList().length === kept && pinned.lat === 50.04 && pinned.lon === 8.56,
+  `n=${mobile.craftList().length} lat=${pinned.lat} lon=${pinned.lon}`,
+);
+
+const live = web.applyFeedBody(primed.body, true, t0);
+const moved = web.positionAt(web.craftList()[0], t0 + 180_000);
+check('fresh frame still dead-reckons', live.fresh === true && moved.lon !== 8.56, `fresh=${live.fresh} lon=${moved.lon}`);
+
 console.log(`plane count t0=${drawnNow} t+180s=${drawnLater} snapshot=${held.n} source=${held.src} adsbCalls=${calls.adsb} openskyCalls=${calls.opensky}`);
 Date.now = realNow;
 if (failures.length) {
