@@ -1,5 +1,6 @@
 package com.zot24.skytrace
 
+import android.content.Context
 import android.os.SystemClock
 import android.util.Log
 import android.view.Choreographer
@@ -97,7 +98,7 @@ fun SkyMap(
                 map.uiSettings.isLogoEnabled = false
                 map.uiSettings.isAttributionEnabled = false
                 map.setStyle(Style.Builder().fromUri(STYLE_URL)) { style ->
-                    install(style, vm.airports)
+                    install(style, vm.airports, mapView.context)
                     holder.airportsSent = vm.airports.isNotEmpty()
                     map.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(24.0, 12.0), 1.8))
                     val planes = style.getSourceAs<GeoJsonSource>("planes")
@@ -154,10 +155,10 @@ private fun formatFpsLine(fps: Double, planes: Int): String {
     return String.format(Locale.US, "fps=%.1f planes=%d", fps, planes)
 }
 
-private fun install(style: Style, airports: List<Airport>) {
+private fun install(style: Style, airports: List<Airport>, context: Context) {
     for (kind in Silhouette.entries) {
-        style.addImage(kind.name, silhouetteBitmap(kind, selected = false))
-        style.addImage("${kind.name}-sel", silhouetteBitmap(kind, selected = true))
+        style.addImage(kind.name, aircraftIcon(context, kind, selected = false))
+        style.addImage("${kind.name}-sel", aircraftIcon(context, kind, selected = true))
     }
     style.addSource(GeoJsonSource("airports", airportsJson(airports)))
     style.addSource(GeoJsonSource("trail", EMPTY))
@@ -244,10 +245,10 @@ private fun install(style: Style, airports: List<Airport>) {
             Expression.interpolate(
                 Expression.linear(),
                 Expression.zoom(),
-                Expression.stop(2, 0.42),
-                Expression.stop(6, 0.58),
-                Expression.stop(11, 0.78),
-                Expression.stop(14, 1.0),
+                scaledStop(2.0, 0.42),
+                scaledStop(6.0, 0.58),
+                scaledStop(11.0, 0.78),
+                scaledStop(14.0, 1.0),
             ),
         ),
     )
@@ -258,6 +259,22 @@ private fun install(style: Style, airports: List<Airport>) {
     style.addLayer(line("trail-casing", "#1a1004", 0.95f, 0f, Expression.stop(1, 6), Expression.stop(6, 8), Expression.stop(10, 11), Expression.stop(14, 15)))
     style.addLayer(line("trail-core", "#ffc14a", 1f, 0f, Expression.stop(1, 3), Expression.stop(6, 4), Expression.stop(10, 5.5), Expression.stop(14, 7.5)))
     style.addLayer(planes)
+}
+
+private fun iconScaleExpression(): Expression {
+    val stops = mutableListOf<Expression.Stop>()
+    for (kind in Silhouette.entries) {
+        val scale = iconScale(kind)
+        if (scale != 1.0) {
+            stops += Expression.stop(kind.name, scale)
+            stops += Expression.stop("${kind.name}-sel", scale)
+        }
+    }
+    return Expression.match(Expression.get("icon"), Expression.literal(1.0), *stops.toTypedArray())
+}
+
+private fun scaledStop(zoom: Double, size: Double): Expression.Stop {
+    return Expression.stop(zoom, Expression.product(Expression.literal(size), iconScaleExpression()))
 }
 
 private fun airportsJson(airports: List<Airport>): String {

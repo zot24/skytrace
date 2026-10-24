@@ -282,7 +282,7 @@ private fun AboutSheet(baseUrl: String, onSave: (String) -> Unit, onClose: () ->
             Text("About", color = Paper, fontSize = 18.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
             Text(
-                "Aircraft silhouettes in this app are original drawings, released under the MIT licence with the rest of the skytrace code. Shapes from tar1090 are not included. That project is GPL-2.0-or-later, which would cover a combined app.",
+                "Aircraft icons based on Pinhead by Quincy Morgan (CC0 1.0), https://github.com/waysidemapping/pinhead",
                 color = Paper,
                 fontSize = 13.sp,
                 lineHeight = 18.sp,

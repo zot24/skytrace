@@ -14,6 +14,17 @@ enum class Silhouette {
     HELI_HEAVY,
 }
 
+fun iconScale(kind: Silhouette): Double = when (kind) {
+    Silhouette.WIDE_BODY -> 1.15
+    Silhouette.BIZJET, Silhouette.LIGHT_PISTON -> 0.85
+    Silhouette.NARROW_BODY,
+    Silhouette.REGIONAL_JET,
+    Silhouette.TURBOPROP,
+    Silhouette.HELI_LIGHT,
+    Silhouette.HELI_MEDIUM,
+    Silhouette.HELI_HEAVY -> 1.0
+}
+
 fun silhouetteFor(typeCode: String?, emitterCategory: String?): Silhouette {
     val code = typeCode
         .orEmpty()

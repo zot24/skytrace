@@ -23,7 +23,7 @@ Favourites for airports and aircraft stay on the device in DataStore. There is n
 
 ## Aircraft icons
 
-The nine silhouettes are original drawings in `SilhouetteBitmap.kt`. They use the MIT licence of this repo. Shapes from tar1090 are not included. tar1090 is GPL-2.0-or-later, and that licence would cover a combined app.
+Aircraft icons based on Pinhead by Quincy Morgan (CC0 1.0), https://github.com/waysidemapping/pinhead
 
 A known ICAO type code picks the silhouette. A missing or unknown type uses the ADS-B emitter category. The worker appends that category as the 10th field of each aircraft row when adsb.lol sends `category`. OpenSky rows leave the field empty. A known type wins over the category.
 
