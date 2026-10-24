@@ -1,5 +1,7 @@
 package com.zot24.skytrace
 
+import android.os.SystemClock
+import android.util.Log
 import android.view.Choreographer
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -23,12 +25,18 @@ import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.sources.GeoJsonSource
+import java.util.Locale
 
 private const val STYLE_URL = "https://tiles.openfreemap.org/styles/dark"
 private const val EMPTY = """{"type":"FeatureCollection","features":[]}"""
+private const val FPS_TAG = "skytrace-fps"
 
 @Composable
-fun SkyMap(vm: SkyViewModel, modifier: Modifier = Modifier) {
+fun SkyMap(
+    vm: SkyViewModel,
+    modifier: Modifier = Modifier,
+    onFpsLine: ((String) -> Unit)? = null,
+) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val mapView = remember { MapView(context) }
@@ -50,6 +58,7 @@ fun SkyMap(vm: SkyViewModel, modifier: Modifier = Modifier) {
         }
         lifecycle.addObserver(observer)
         onDispose {
+            holder.map?.setOnFpsChangedListener(null)
             holder.callback?.let { Choreographer.getInstance().removeFrameCallback(it) }
             lifecycle.removeObserver(observer)
             mapView.onPause()
@@ -72,6 +81,19 @@ fun SkyMap(vm: SkyViewModel, modifier: Modifier = Modifier) {
         factory = {
             mapView.getMapAsync { map ->
                 holder.map = map
+                if (BuildConfig.DEBUG) {
+                    // MapLibre invokes this on the GL thread. The header state is main-thread only.
+                    map.setOnFpsChangedListener { fps ->
+                        val now = SystemClock.elapsedRealtime()
+                        if (now - holder.lastFpsLogMs < 1_000L) return@setOnFpsChangedListener
+                        holder.lastFpsLogMs = now
+                        mapView.post {
+                            val line = formatFpsLine(fps, holder.drawnPlanes)
+                            Log.i(FPS_TAG, line)
+                            onFpsLine?.invoke(line)
+                        }
+                    }
+                }
                 map.uiSettings.isLogoEnabled = false
                 map.uiSettings.isAttributionEnabled = false
                 map.setStyle(Style.Builder().fromUri(STYLE_URL)) { style ->
@@ -99,6 +121,7 @@ fun SkyMap(vm: SkyViewModel, modifier: Modifier = Modifier) {
                             }
                             planes?.setGeoJson(planesJson(picture.planes, vm.selected))
                             trail?.setGeoJson(trailJson(picture.trails))
+                            holder.drawnPlanes = picture.planes.size
                             Choreographer.getInstance().postFrameCallback(this)
                         }
                     }
@@ -123,6 +146,12 @@ private class MapHolder {
     var callback: Choreographer.FrameCallback? = null
     var created: Boolean = false
     var airportsSent: Boolean = false
+    var drawnPlanes: Int = 0
+    var lastFpsLogMs: Long = 0L
+}
+
+private fun formatFpsLine(fps: Double, planes: Int): String {
+    return String.format(Locale.US, "fps=%.1f planes=%d", fps, planes)
 }
 
 private fun install(style: Style, airports: List<Airport>) {

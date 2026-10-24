@@ -56,12 +56,17 @@ fun SkyScreen(vm: SkyViewModel = viewModel()) {
     var query by remember { mutableStateOf("") }
     var focused by remember { mutableStateOf(false) }
     var about by remember { mutableStateOf(false) }
+    var fpsLine by remember { mutableStateOf<String?>(null) }
     val hits = if (query.isBlank()) emptyList() else searchAirports(vm.airports, query)
     val showFavs = focused && query.isBlank()
     val countText = NumberFormat.getIntegerInstance(Locale.US).format(vm.count)
 
     Box(Modifier.fillMaxSize().background(Ink)) {
-        SkyMap(vm, Modifier.fillMaxSize())
+        SkyMap(
+            vm,
+            Modifier.fillMaxSize(),
+            onFpsLine = if (BuildConfig.DEBUG) ({ fpsLine = it }) else null,
+        )
         Column(
             Modifier
                 .fillMaxWidth()
@@ -87,6 +92,11 @@ fun SkyScreen(vm: SkyViewModel = viewModel()) {
                     color = Muted,
                     fontSize = 12.sp,
                 )
+                if (BuildConfig.DEBUG) {
+                    fpsLine?.let { line ->
+                        Text(line, color = Muted, fontSize = 11.sp)
+                    }
+                }
             }
             Spacer(Modifier.height(8.dp))
             BasicTextField(
