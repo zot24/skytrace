@@ -1,31 +1,25 @@
-import 'maplibre-gl/dist/maplibre-gl.css';
 import './style.css';
-import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
-import { GeoJSONSource, Map, setWorkerUrl, type MapMouseEvent } from 'maplibre-gl';
-
-setWorkerUrl(workerUrl);
+import type { GeoJSONSource, Map, MapMouseEvent } from 'maplibre-gl';
 import { PlaneLayer } from './plane-layer';
+import type { Airport } from './airports';
 import {
   craftByHex,
   craftList,
+  notePosition,
   positionAt,
   replaceAll,
   synthetic,
+  trackOf,
   type Craft,
   type FeedRow,
 } from './traffic';
 
-type Airport = {
-  icao: string;
-  iata: string;
-  name: string;
-  lat: number;
-  lon: number;
-  kind: 'L' | 'M';
-  city: string;
+type FeedBody = {
+  src?: string;
+  ac?: FeedRow[];
+  stale?: boolean;
+  retryAfterMs?: number;
 };
-
-type AirportRow = [string, string, string, number, number, 'L' | 'M', string];
 
 declare global {
   interface Window {
@@ -34,6 +28,11 @@ declare global {
     __samplePlane: () => { x: number; y: number } | null;
   }
 }
+
+const STUB_MS = 150_000;
+const SUCCESS_MS = 5_000;
+const FAIL_BASE_MS = 2_000;
+const FAIL_CAP_MS = 60_000;
 
 const started = performance.now();
 const frameTimes: number[] = [];
@@ -57,105 +56,14 @@ let airports: Airport[] = [];
 let shown: Airport[] = [];
 let cursor = -1;
 let selected: string | null = null;
-let trail: [number, number][] = [];
 let lastTrail = 0;
 let airportsReady = false;
+let pollAttempt = 0;
+let pollTimer = 0;
+let map!: Map;
 
 const layer = new PlaneLayer();
 layer.onFrame = noteFrame;
-
-const map = new Map({
-  container: 'map',
-  style: 'https://tiles.openfreemap.org/styles/dark',
-  center: [12, 24],
-  zoom: 1.8,
-  attributionControl: false,
-  canvasContextAttributes: { antialias: true },
-});
-
-window.__map = map;
-window.__samplePlane = samplePlane;
-
-map.on('load', () => {
-  window.__skytrace.firstMapLoadMs = Math.round(performance.now() - started);
-  map.addSource('airports', { type: 'geojson', data: emptyCollection() });
-  map.addSource('trail', { type: 'geojson', data: emptyCollection() });
-  map.addSource('planes', { type: 'geojson', data: emptyCollection() });
-  map.addLayer({
-    id: 'airports-large',
-    type: 'circle',
-    source: 'airports',
-    filter: ['==', ['get', 'k'], 'L'],
-    paint: {
-      'circle-radius': ['interpolate', ['linear'], ['zoom'], 1.5, 1.7, 4, 3.2, 8, 5.5],
-      'circle-color': '#e4b15a',
-      'circle-stroke-width': 1,
-      'circle-stroke-color': 'rgba(0,0,0,0.5)',
-      'circle-opacity': 0.92,
-    },
-  });
-  map.addLayer({
-    id: 'airports-medium',
-    type: 'circle',
-    source: 'airports',
-    minzoom: 4,
-    filter: ['==', ['get', 'k'], 'M'],
-    paint: {
-      'circle-radius': ['interpolate', ['linear'], ['zoom'], 4, 1.6, 7, 3, 11, 4.5],
-      'circle-color': '#8ea0b5',
-      'circle-opacity': 0.8,
-      'circle-stroke-width': 0.6,
-      'circle-stroke-color': 'rgba(0,0,0,0.45)',
-    },
-  });
-  map.addLayer({
-    id: 'airport-label',
-    type: 'symbol',
-    source: 'airports',
-    minzoom: 6,
-    filter: ['==', ['get', 'k'], 'L'],
-    layout: {
-      'text-field': ['case', ['!=', ['get', 'iata'], ''], ['get', 'iata'], ['get', 'icao']],
-      'text-font': ['Noto Sans Regular'],
-      'text-size': 11,
-      'text-offset': [0, 0.7],
-      'text-anchor': 'top',
-    },
-    paint: {
-      'text-color': '#e7eef6',
-      'text-halo-color': '#0c1016',
-      'text-halo-width': 1.2,
-    },
-  });
-  map.addLayer({
-    id: 'trail',
-    type: 'line',
-    source: 'trail',
-    paint: {
-      'line-color': '#e6b15a',
-      'line-width': 2,
-      'line-opacity': 0.9,
-    },
-    layout: { 'line-cap': 'round', 'line-join': 'round' },
-  });
-  map.addLayer(layer);
-  if (airportsReady) publishAirports();
-  if (syntheticCount) {
-    synthetic(syntheticCount, performance.now());
-    syncPlanes();
-  } else {
-    void poll();
-    window.setInterval(() => void poll(), 5000);
-  }
-  window.__skytrace.ready = true;
-  paintStat();
-});
-
-map.on('click', (event: MapMouseEvent) => {
-  const hit = pick(event.point.x, event.point.y);
-  if (hit) select(hit.hex);
-  else clearSelection();
-});
 
 document.querySelector<HTMLButtonElement>('#close')!.addEventListener('click', clearSelection);
 window.addEventListener('keydown', (event) => {
@@ -193,7 +101,142 @@ window.setInterval(() => {
   }
 }, 250);
 
-void loadAirports();
+void boot();
+
+async function boot() {
+  const [ml, workerMod] = await Promise.all([
+    import('maplibre-gl'),
+    import('maplibre-gl/dist/maplibre-gl-worker.mjs?url'),
+    import('maplibre-gl/dist/maplibre-gl.css'),
+  ]);
+  ml.setWorkerUrl(workerMod.default);
+  map = new ml.Map({
+    container: 'map',
+    style: 'https://tiles.openfreemap.org/styles/dark',
+    center: [12, 24],
+    zoom: 1.8,
+    attributionControl: false,
+    canvasContextAttributes: { antialias: true },
+  });
+
+  window.__map = map;
+  window.__samplePlane = samplePlane;
+
+  map.on('load', () => {
+    window.__skytrace.firstMapLoadMs = Math.round(performance.now() - started);
+    map.addSource('airports', { type: 'geojson', data: emptyCollection() });
+    map.addSource('trail', { type: 'geojson', data: emptyCollection() });
+    map.addSource('planes', { type: 'geojson', data: emptyCollection() });
+    map.addLayer({
+      id: 'airports-large',
+      type: 'circle',
+      source: 'airports',
+      filter: ['==', ['get', 'k'], 'L'],
+      paint: {
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 1.5, 1.7, 4, 3.2, 8, 5.5],
+        'circle-color': '#e4b15a',
+        'circle-stroke-width': 1,
+        'circle-stroke-color': 'rgba(0,0,0,0.5)',
+        'circle-opacity': 0.92,
+      },
+    });
+    map.addLayer({
+      id: 'airports-medium',
+      type: 'circle',
+      source: 'airports',
+      minzoom: 4,
+      filter: ['==', ['get', 'k'], 'M'],
+      paint: {
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 4, 1.6, 7, 3, 11, 4.5],
+        'circle-color': '#8ea0b5',
+        'circle-opacity': 0.8,
+        'circle-stroke-width': 0.6,
+        'circle-stroke-color': 'rgba(0,0,0,0.45)',
+      },
+    });
+    map.addLayer({
+      id: 'airport-label',
+      type: 'symbol',
+      source: 'airports',
+      minzoom: 6,
+      filter: ['==', ['get', 'k'], 'L'],
+      layout: {
+        'text-field': ['case', ['!=', ['get', 'iata'], ''], ['get', 'iata'], ['get', 'icao']],
+        'text-font': ['Noto Sans Regular'],
+        'text-size': 11,
+        'text-offset': [0, 0.7],
+        'text-anchor': 'top',
+      },
+      paint: {
+        'text-color': '#e7eef6',
+        'text-halo-color': '#0c1016',
+        'text-halo-width': 1.2,
+      },
+    });
+    const trailLayout = { 'line-cap': 'round' as const, 'line-join': 'round' as const };
+    map.addLayer({
+      id: 'trail-glow',
+      type: 'line',
+      source: 'trail',
+      layout: trailLayout,
+      paint: {
+        'line-color': '#ffb020',
+        'line-width': ['interpolate', ['linear'], ['zoom'], 1, 10, 6, 14, 10, 18, 14, 24],
+        'line-opacity': 0.35,
+        'line-blur': 1.5,
+      },
+    });
+    map.addLayer({
+      id: 'trail-casing',
+      type: 'line',
+      source: 'trail',
+      layout: trailLayout,
+      paint: {
+        'line-color': '#1a1004',
+        'line-width': ['interpolate', ['linear'], ['zoom'], 1, 6, 6, 8, 10, 11, 14, 15],
+        'line-opacity': 0.95,
+      },
+    });
+    map.addLayer({
+      id: 'trail',
+      type: 'line',
+      source: 'trail',
+      layout: trailLayout,
+      paint: {
+        'line-color': '#ffc14a',
+        'line-width': ['interpolate', ['linear'], ['zoom'], 1, 3, 6, 4, 10, 5.5, 14, 7.5],
+        'line-opacity': 1,
+      },
+    });
+    map.addLayer(layer);
+    if (airportsReady) publishAirports();
+    if (syntheticCount) {
+      synthetic(syntheticCount, performance.now());
+      syncPlanes();
+    } else {
+      void poll();
+    }
+    window.__skytrace.ready = true;
+    paintStat();
+  });
+
+  map.on('click', (event: MapMouseEvent) => {
+    const hit = pick(event.point.x, event.point.y);
+    if (hit) select(hit.hex);
+    else clearSelection();
+  });
+
+  void import('./airports')
+    .then((mod) => mod.loadAirports())
+    .then((rows) => {
+      airports = rows;
+      airportsReady = true;
+      if (map.isStyleLoaded()) publishAirports();
+    })
+    .catch((error) => {
+      console.error(error);
+    });
+}
 
 function readSynthetic(): number | null {
   const raw = new URLSearchParams(location.search).get('synthetic');
@@ -217,8 +260,8 @@ function emptyCollection(): GeoJSON.FeatureCollection {
 
 function source(id: string): GeoJSONSource {
   const found = map.getSource(id);
-  if (!(found instanceof GeoJSONSource)) throw new Error(`missing source ${id}`);
-  return found;
+  if (!found || found.type !== 'geojson') throw new Error(`missing source ${id}`);
+  return found as GeoJSONSource;
 }
 
 function syncPlanes() {
@@ -232,20 +275,59 @@ function syncPlanes() {
   source('planes').setData({ type: 'FeatureCollection', features });
 }
 
+function failureDelay(attempt: number): number {
+  const exp = Math.min(FAIL_CAP_MS, FAIL_BASE_MS * 2 ** Math.min(attempt - 1, 5));
+  return Math.round(Math.min(FAIL_CAP_MS, exp * (0.5 + Math.random() * 0.5)));
+}
+
+function armPoll(delay: number, reason: string | null) {
+  window.clearTimeout(pollTimer);
+  if (reason) console.info(`skytrace backoff ${delay}ms (${reason})`);
+  pollTimer = window.setTimeout(() => void poll(), delay);
+}
+
+function markStale() {
+  const base = sourceName.replace(/ · stale$/, '');
+  sourceName = base && base !== 'connecting' && base !== 'feed unavailable' ? `${base} · stale` : 'feed unavailable';
+}
+
+function keepFrame(body: FeedBody) {
+  if (!body.ac?.length) return;
+  replaceAll(body.ac, performance.now());
+  syncPlanes();
+  if (body.src && body.src !== 'none') sourceName = body.src;
+}
+
 async function poll() {
   try {
     const res = await fetch(feedUrl(), { cache: 'no-store' });
-    if (!res.ok) throw new Error(String(res.status));
-    const body = (await res.json()) as { src?: string; ac?: FeedRow[] };
-    if (!body.ac || body.src === 'none') {
-      sourceName = 'feed unavailable';
-    } else {
-      replaceAll(body.ac, performance.now());
-      syncPlanes();
-      sourceName = body.src || 'adsb.lol';
+    let body: FeedBody | null = null;
+    try {
+      body = (await res.json()) as FeedBody;
+    } catch {
+      body = null;
     }
+    const fresh = !!body && res.ok && !body.stale && body.src !== 'none' && (body.ac?.length ?? 0) > 0;
+    if (!fresh || !body?.ac) {
+      if (body) keepFrame(body);
+      pollAttempt += 1;
+      if (craftList().length) markStale();
+      else sourceName = 'feed unavailable';
+      const why = !res.ok ? `http ${res.status}` : body?.stale ? 'stale' : 'empty';
+      armPoll(failureDelay(pollAttempt), `attempt ${pollAttempt}, ${why}`);
+      paintStat();
+      return;
+    }
+    replaceAll(body.ac, performance.now());
+    syncPlanes();
+    sourceName = body.src || 'adsb.lol';
+    pollAttempt = 0;
+    armPoll(SUCCESS_MS + Math.round(Math.random() * 800), null);
   } catch {
-    sourceName = 'feed unavailable';
+    pollAttempt += 1;
+    if (craftList().length) markStale();
+    else sourceName = 'feed unavailable';
+    armPoll(failureDelay(pollAttempt), `attempt ${pollAttempt}, network`);
   }
   paintStat();
 }
@@ -254,9 +336,14 @@ function feedUrl(): string {
   const bounds = map.getBounds();
   const latSpan = bounds.getNorth() - bounds.getSouth();
   const lonSpan = Math.abs(bounds.getEast() - bounds.getWest());
-  if (latSpan > 12 || lonSpan > 18) return '/api/planes';
-  const qn = (n: number) => (Math.round(n * 2) / 2).toFixed(1);
-  return `/api/planes?lamin=${qn(bounds.getSouth())}&lamax=${qn(bounds.getNorth())}&lomin=${qn(bounds.getWest())}&lomax=${qn(bounds.getEast())}`;
+  let url = '/api/planes';
+  if (latSpan <= 12 && lonSpan <= 18) {
+    const qn = (n: number) => (Math.round(n * 2) / 2).toFixed(1);
+    url = `/api/planes?lamin=${qn(bounds.getSouth())}&lamax=${qn(bounds.getNorth())}&lomin=${qn(bounds.getWest())}&lomax=${qn(bounds.getEast())}`;
+  }
+  const flag = new URLSearchParams(location.search).get('simulate429');
+  if (flag == null || flag === '0' || flag === 'false') return url;
+  return `${url}${url.includes('?') ? '&' : '?'}simulate429=1`;
 }
 
 function paintStat() {
@@ -306,7 +393,6 @@ function select(hex: string) {
   if (!craft) return;
   selected = hex;
   layer.selected = hex;
-  trail = [];
   lastTrail = 0;
   panel.hidden = false;
   fillPanel(craft);
@@ -317,8 +403,7 @@ function clearSelection() {
   selected = null;
   layer.selected = null;
   panel.hidden = true;
-  trail = [];
-  source('trail').setData(emptyCollection());
+  if (map?.getSource('trail')) source('trail').setData(emptyCollection());
 }
 
 function fillPanel(craft: Craft) {
@@ -332,30 +417,41 @@ function fillPanel(craft: Craft) {
 }
 
 function extendTrail(now: number, force = false) {
-  if (!selected) return;
+  if (!selected || !map?.getSource('trail')) return;
   const craft = craftByHex(selected);
   if (!craft) return;
-  const p = positionAt(craft, now);
   if (force || now - lastTrail >= 1000) {
-    const prev = trail[trail.length - 1];
-    const moved = !prev || Math.abs(prev[0] - p.lon) > 180
-      || Math.abs(prev[0] - p.lon) + Math.abs(prev[1] - p.lat) > 0.01;
-    if (moved) {
-      trail.push([p.lon, p.lat]);
-      if (trail.length > 700) trail.shift();
-    }
+    const p = positionAt(craft, now);
+    notePosition(selected, p.lon, p.lat, now);
     lastTrail = now;
   }
-  const head: [number, number] = [p.lon, p.lat];
-  const coords = trail.length && samePoint(trail[trail.length - 1], head) ? trail : trail.concat([head]);
-  source('trail').setData(trailFeature(coords));
+  source('trail').setData(trailCollection(craft, now));
+}
+
+function trailCollection(craft: Craft, now: number): GeoJSON.FeatureCollection {
+  const fixes = trackOf(craft.hex);
+  const head = positionAt(craft, now);
+  const real: [number, number][] = fixes.map((fix) => [fix[0], fix[1]]);
+  const tip: [number, number] = [head.lon, head.lat];
+  if (!real.length || !samePoint(real[real.length - 1], tip)) real.push(tip);
+
+  const features: GeoJSON.Feature[] = [];
+  const originT = fixes[0]?.[2] ?? craft.t;
+  const span = fixes.length ? now - originT : 0;
+  if (span < STUB_MS && craft.gs >= 40 && real[0]) {
+    const origin = real[0];
+    const anchor = positionAt({ ...craft, lon: origin[0], lat: origin[1], t: originT }, originT - STUB_MS);
+    features.push(...lineFeatures([[anchor.lon, anchor.lat], origin], 'stub'));
+  }
+  features.push(...lineFeatures(real, 'real'));
+  return { type: 'FeatureCollection', features };
 }
 
 function samePoint(a: [number, number], b: [number, number]) {
   return Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[1] - b[1]) < 1e-6;
 }
 
-function trailFeature(points: [number, number][]): GeoJSON.FeatureCollection {
+function lineFeatures(points: [number, number][], kind: 'stub' | 'real'): GeoJSON.Feature[] {
   const lines: [number, number][][] = [];
   let current: [number, number][] = [];
   for (const point of points) {
@@ -367,29 +463,11 @@ function trailFeature(points: [number, number][]): GeoJSON.FeatureCollection {
     current.push(point);
   }
   if (current.length >= 2) lines.push(current);
-  return {
-    type: 'FeatureCollection',
-    features: lines.map((coordinates) => ({
-      type: 'Feature',
-      properties: {},
-      geometry: { type: 'LineString', coordinates },
-    })),
-  };
-}
-
-async function loadAirports() {
-  const rows = (await fetch('/airports.json').then((res) => res.json())) as AirportRow[];
-  airports = rows.map((row) => ({
-    icao: row[0],
-    iata: row[1],
-    name: row[2],
-    lat: row[3],
-    lon: row[4],
-    kind: row[5],
-    city: row[6],
+  return lines.map((coordinates) => ({
+    type: 'Feature',
+    properties: { kind },
+    geometry: { type: 'LineString', coordinates },
   }));
-  airportsReady = true;
-  if (map.isStyleLoaded()) publishAirports();
 }
 
 function publishAirports() {
@@ -455,5 +533,5 @@ function paintCursor() {
 function choose(airport: Airport) {
   hits.hidden = true;
   q.value = airport.iata || airport.icao || airport.name;
-  map.flyTo({ center: [airport.lon, airport.lat], zoom: 11, essential: true, duration: 1400 });
+  map?.flyTo({ center: [airport.lon, airport.lat], zoom: 11, essential: true, duration: 1400 });
 }

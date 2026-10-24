@@ -2,6 +2,12 @@ type Ac = [string, string, number, number, number, number, number, string, strin
 
 type Bbox = { south: number; north: number; west: number; east: number };
 
+type Snapshot = { src: 'adsb.lol' | 'opensky'; ac: Ac[]; at: number };
+
+export interface Env {
+  SKYTRACE_SIMULATE_429?: string;
+}
+
 type AdsbAc = {
   hex?: string;
   flight?: string | null;
@@ -33,50 +39,139 @@ const TILES: Array<[number, number]> = [
 
 const TILE_TTL_MS = 120_000;
 const BATCH = 3;
+const BACKOFF_BASE_MS = 2_000;
+const BACKOFF_CAP_MS = 60_000;
 const tiles = new Map<string, { at: number; ac: Ac[] }>();
 let cursor = 0;
+let failStreak = 0;
+let backoffUntil = 0;
+let lastGood: Snapshot | null = null;
+
+class UpstreamError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'UpstreamError';
+    this.status = status;
+  }
+}
 
 export default {
-  async fetch(req: Request): Promise<Response> {
+  async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
     if (url.pathname !== '/api/planes') return new Response('not found', { status: 404 });
 
-    const cacheKey = new Request(`https://skytrace.internal${url.pathname}${url.search}`);
-    const cached = await readCache(cacheKey);
-    if (cached) return cached;
+    const simulate = wantSimulated429(url, env);
+    const cacheUrl = new URL(url);
+    cacheUrl.searchParams.delete('simulate429');
+    const cacheKey = new Request(`https://skytrace.internal${cacheUrl.pathname}${cacheUrl.search}`);
+    if (!simulate) {
+      const cached = await readCache(cacheKey);
+      if (cached) return cached;
+    }
 
-    const bbox = readBbox(url);
-    let src: 'adsb.lol' | 'opensky' | 'none' = 'adsb.lol';
-    let ac: Ac[] = [];
+    const now = Date.now();
+    if (now < backoffUntil) {
+      const retryAfterMs = holdBackoff(simulate ? 'simulated 429 holding' : 'upstream 429 holding');
+      return respond(rememberTiles(), true, retryAfterMs, null);
+    }
+
+    const bbox = readBbox(cacheUrl);
+    if (simulate) {
+      const retryAfterMs = scheduleBackoff('simulated 429');
+      return respond(rememberTiles(), true, retryAfterMs, null);
+    }
+
     try {
-      await refresh(bbox ? cover(bbox) : nextBatch());
-      ac = collect();
-      if (ac.length === 0) throw new Error('adsb.lol returned no aircraft');
-    } catch {
+      const outcome = await refresh(bbox ? cover(bbox) : nextBatch());
+      if (outcome.rateLimited) {
+        const retryAfterMs = scheduleBackoff('upstream 429');
+        return respond(rememberTiles(), true, retryAfterMs, null);
+      }
+      const ac = collect();
+      if (ac.length === 0) throw new UpstreamError(502, 'adsb.lol returned no aircraft');
+      lastGood = { src: 'adsb.lol', ac, at: Date.now() };
+      failStreak = 0;
+      backoffUntil = 0;
+      return respond(lastGood, false, 0, cacheKey);
+    } catch (error) {
+      if (statusOf(error) === 429) {
+        const retryAfterMs = scheduleBackoff('upstream 429');
+        return respond(rememberTiles(), true, retryAfterMs, null);
+      }
       try {
-        ac = await openSky(bbox);
-        src = 'opensky';
-      } catch {
-        src = 'none';
-        ac = [];
+        const ac = await openSky(bbox);
+        lastGood = { src: 'opensky', ac, at: Date.now() };
+        failStreak = 0;
+        backoffUntil = 0;
+        return respond(lastGood, false, 0, cacheKey);
+      } catch (skyError) {
+        const reason = statusOf(skyError) === 429 ? 'upstream 429' : 'upstream failure';
+        const retryAfterMs = scheduleBackoff(reason);
+        return respond(rememberTiles(), true, retryAfterMs, null);
       }
     }
-
-    const headers = {
-      'content-type': 'application/json; charset=utf-8',
-      'cache-control': 'public, max-age=5',
-      'access-control-allow-origin': '*',
-      'x-cached-at': String(Date.now()),
-    };
-    const res = new Response(JSON.stringify({ src, ts: Date.now(), ac }), { headers });
-    try {
-      await caches.default.put(cacheKey, res.clone());
-    } catch {
-      // Local wrangler can run without the Cache API.
-    }
-    return res;
   },
 };
+
+function wantSimulated429(url: URL, env: Env): boolean {
+  const host = url.hostname;
+  const local = host === '127.0.0.1' || host === 'localhost' || host === '::1';
+  if (!local) return false;
+  if (env.SKYTRACE_SIMULATE_429 === '1') return true;
+  if (!url.searchParams.has('simulate429')) return false;
+  const value = url.searchParams.get('simulate429');
+  return value !== '0' && value !== 'false';
+}
+
+function scheduleBackoff(reason: string): number {
+  failStreak += 1;
+  const exp = Math.min(BACKOFF_CAP_MS, BACKOFF_BASE_MS * 2 ** Math.min(failStreak - 1, 5));
+  const delay = Math.round(Math.min(BACKOFF_CAP_MS, exp * (0.5 + Math.random() * 0.5)));
+  backoffUntil = Date.now() + delay;
+  console.log(`skytrace backoff ${delay}ms (${reason}, attempt ${failStreak})`);
+  return delay;
+}
+
+function holdBackoff(reason: string): number {
+  const delay = Math.max(0, backoffUntil - Date.now());
+  console.log(`skytrace backoff ${delay}ms (${reason}, attempt ${failStreak})`);
+  return delay;
+}
+
+function rememberTiles(): Snapshot | null {
+  const ac = collect();
+  if (ac.length && (!lastGood || ac.length >= lastGood.ac.length)) {
+    lastGood = { src: 'adsb.lol', ac, at: lastGood?.at ?? Date.now() };
+  }
+  return lastGood;
+}
+
+function respond(snap: Snapshot | null, stale: boolean, retryAfterMs: number, cacheKey: Request | null): Response {
+  const ac = snap?.ac ?? [];
+  const src = snap?.src ?? 'none';
+  const status = ac.length ? 200 : stale ? 429 : 200;
+  const headers: Record<string, string> = {
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': stale ? 'no-store' : 'public, max-age=5',
+    'access-control-allow-origin': '*',
+    'x-cached-at': String(Date.now()),
+  };
+  if (stale) headers['retry-after'] = String(Math.max(1, Math.ceil(retryAfterMs / 1000)));
+  const res = new Response(JSON.stringify({
+    src,
+    ts: snap?.at ?? Date.now(),
+    stale,
+    retryAfterMs: stale ? retryAfterMs : 0,
+    ac,
+  }), { status, headers });
+  if (cacheKey && status === 200 && !stale) {
+    void caches.default.put(cacheKey, res.clone()).catch(() => {
+      // Local wrangler can run without the Cache API.
+    });
+  }
+  return res;
+}
 
 async function readCache(key: Request): Promise<Response | null> {
   try {
@@ -98,23 +193,26 @@ function nextBatch(): Array<[number, number]> {
   return batch;
 }
 
-async function refresh(list: Array<[number, number]>) {
+async function refresh(list: Array<[number, number]>): Promise<{ rateLimited: boolean }> {
   let index = 0;
+  let rateLimited = false;
   async function worker() {
-    while (index < list.length) {
+    while (index < list.length && !rateLimited) {
       const [lat, lon] = list[index++];
       const id = `${round1(lat)},${round1(lon)}`;
       const prev = tiles.get(id);
       if (prev && Date.now() - prev.at < 5000) continue;
       try {
         tiles.set(id, { at: Date.now(), ac: await adsbTile(round1(lat), round1(lon)) });
-      } catch {
-        // Keep the previous tile when a single upstream call is rate limited.
+      } catch (error) {
+        if (statusOf(error) === 429) rateLimited = true;
+        // Keep the previous tile when a single upstream call fails.
       }
     }
   }
   const workers = Math.min(2, list.length);
   await Promise.all(Array.from({ length: workers }, () => worker()));
+  return { rateLimited };
 }
 
 function collect(): Ac[] {
@@ -213,11 +311,15 @@ async function fetchJson(url: string, ms: number): Promise<unknown> {
       signal: ctrl.signal,
       headers: { accept: 'application/json', 'user-agent': 'skytrace/0.1' },
     });
-    if (!res.ok) throw new Error(`${res.status} ${url}`);
+    if (!res.ok) throw new UpstreamError(res.status, `${res.status} ${url}`);
     return await res.json();
   } finally {
     clearTimeout(timer);
   }
+}
+
+function statusOf(error: unknown): number {
+  return error instanceof UpstreamError ? error.status : 0;
 }
 
 function readBbox(url: URL): Bbox | null {

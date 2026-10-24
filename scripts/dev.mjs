@@ -1,7 +1,10 @@
 import { spawn } from 'node:child_process';
 
+const wranglerArgs = ['wrangler', 'dev', '--port', '8787', '--ip', '127.0.0.1', '--show-interactive-dev-session=false'];
+if (process.env.SKYTRACE_SIMULATE_429 === '1') wranglerArgs.push('--var', 'SKYTRACE_SIMULATE_429:1');
+
 const children = [
-  spawn('npx', ['wrangler', 'dev', '--port', '8787', '--ip', '127.0.0.1'], { stdio: 'inherit' }),
+  spawn('npx', wranglerArgs, { stdio: 'inherit' }),
   spawn('npx', ['vite', '--host', '127.0.0.1', '--port', '5173'], { stdio: 'inherit' }),
 ];
 
