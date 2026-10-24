@@ -36,7 +36,6 @@ import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.sources.GeoJsonSource
 import java.util.Locale
 
-private const val STYLE_URL = "https://tiles.openfreemap.org/styles/dark"
 private const val EMPTY = """{"type":"FeatureCollection","features":[]}"""
 private const val FPS_TAG = "skytrace-fps"
 
@@ -94,6 +93,13 @@ fun SkyMap(
     }
 
     LaunchedEffect(mapView) {
+        vm.mapStyle.collect { wanted ->
+            holder.wantedStyle = wanted
+            holder.map?.let { loadStyle(it, holder, vm, mapView) }
+        }
+    }
+
+    LaunchedEffect(mapView) {
         vm.camera.collect { jump ->
             holder.followJump = true
             holder.map?.animateCamera(
@@ -121,6 +127,7 @@ fun SkyMap(
                 map.addOnCameraMoveStartedListener { reason ->
                     if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) {
                         holder.userMoved = true
+                        vm.stopFollow()
                         onUserGestureState.value.invoke()
                     }
                 }
@@ -145,12 +152,8 @@ fun SkyMap(
                 map.uiSettings.isAttributionEnabled = false
                 val planeJson = StringBuilder(64 * 1024)
                 val trailJson = StringBuilder(4 * 1024)
-                map.setStyle(Style.Builder().fromUri(STYLE_URL)) { style ->
-                    vm.planeSymbols = install(style, vm.airports, mapView.context)
-                    holder.airportsSent = vm.airports.isNotEmpty()
-                    applyOpening(map, holder)
-                    val planes = style.getSourceAs<GeoJsonSource>("planes")
-                    val trail = style.getSourceAs<GeoJsonSource>("trail")
+                holder.onStyleReady = {
+                    if (holder.callback == null) {
                     val callback = object : Choreographer.FrameCallback {
                         override fun doFrame(frameTimeNanos: Long) {
                             if (!holder.alive) return
@@ -169,13 +172,29 @@ fun SkyMap(
                                 bounds.longitudeWest,
                                 bounds.longitudeEast,
                             )
+                            val style = holder.style
+                            if (style == null) {
+                                Choreographer.getInstance().postFrameCallback(this)
+                                return
+                            }
                             if (!holder.airportsSent && vm.airports.isNotEmpty()) {
                                 style.getSourceAs<GeoJsonSource>("airports")?.setGeoJson(airportsJson(vm.airports))
                                 holder.airportsSent = true
                             }
+                            val follow = vm.followHex
+                            if (follow != null && clock - holder.lastFollowMs >= 1_000L) {
+                                holder.lastFollowMs = clock
+                                vm.fleet.one(follow, System.currentTimeMillis())?.let { plane ->
+                                    map.easeCamera(CameraUpdateFactory.newLatLng(LatLng(plane.lat, plane.lon)), 900)
+                                }
+                            }
                             val picture = vm.prepareFrame(System.currentTimeMillis(), view, zoom)
                             val selected = vm.selected
-                            val signature = trailSignature(picture.trails)
+                            val favourites = vm.favouriteAircraft.value
+                            val pins = HashSet<String>(favourites)
+                            selected?.let { pins += it }
+                            vm.followHex?.let { pins += it }
+                            val signature = trailSignature(picture.trails) * 31 + pins.hashCode()
                             projectPlanes(map, picture.planes, holder)
                             if (holder.drawn.unchanged(picture.planes, holder.sx, holder.sy, selected, signature)) {
                                 val maintained = SystemClock.elapsedRealtime()
@@ -192,7 +211,7 @@ fun SkyMap(
                             try {
                                 geoExecutor.execute {
                                     val built = try {
-                                        appendPlaneJson(planeJson, picture.planes, selected)
+                                        appendPlaneJson(planeJson, picture.planes, selected, pins, favourites)
                                         val planeBody = planeJson.toString()
                                         appendTrailJson(trailJson, picture.trails)
                                         planeBody to trailJson.toString()
@@ -204,14 +223,17 @@ fun SkyMap(
                                         try {
                                             if (holder.alive && built != null) {
                                                 // GeoJsonSource.setGeoJson requires the UI thread. The string was built on skytrace-geo.
-                                                planes?.setGeoJson(built.first)
+                                                holder.planesSource?.setGeoJson(built.first)
                                                 if (picture.trails.isNotEmpty() || !holder.trailClear) {
-                                                    trail?.setGeoJson(built.second)
+                                                    holder.trailSource?.setGeoJson(built.second)
                                                     holder.trailClear = picture.trails.isEmpty()
                                                 }
                                                 holder.drawn.commit(picture.planes, screenX, screenY, selected, signature)
                                                 holder.drawnPlanes = picture.planes.size
                                                 holder.totalPlanes = picture.total
+                                                holder.inViewPlanes = picture.inView
+                                                holder.pinsInView = picture.pinsInView
+                                                holder.pinsDrawn = picture.pinsDrawn
                                                 val maintained = SystemClock.elapsedRealtime()
                                                 if (maintained - holder.lastMaintainMs >= 1_000L) {
                                                     holder.lastMaintainMs = maintained
@@ -232,7 +254,9 @@ fun SkyMap(
                     }
                     holder.callback = callback
                     Choreographer.getInstance().postFrameCallback(callback)
+                    }
                 }
+                loadStyle(map, holder, vm, mapView)
                 map.addOnMapClickListener { latLng ->
                     val half = HIT_HALF_DP * mapView.resources.displayMetrics.density
                     val age = SystemClock.elapsedRealtime() - holder.touchAtMs
@@ -266,7 +290,13 @@ fun SkyMap(
                         rendered.add(PlaneHit(hex, screen.x, screen.y))
                     }
                     val hits = planesInHitBox(tapX, tapY, half, rendered, queried)
-                    vm.onPlaneHit(hits.firstOrNull()?.hex, System.currentTimeMillis())
+                    if (hits.isNotEmpty()) {
+                        vm.onPlaneHit(hits.map { it.hex }, System.currentTimeMillis())
+                    } else {
+                        val airport = map.queryRenderedFeatures(box, "airports-large", "airports-medium")
+                            .firstNotNullOfOrNull { it.getStringProperty("icao")?.takeIf { icao -> icao.isNotEmpty() } }
+                        if (airport != null) vm.openAirport(airport)
+                    }
                     onUserGestureState.value.invoke()
                     true
                 }
@@ -278,6 +308,16 @@ fun SkyMap(
 
 private class MapHolder {
     var map: MapLibreMap? = null
+    var style: Style? = null
+    var planesSource: GeoJsonSource? = null
+    var trailSource: GeoJsonSource? = null
+    var loadedStyle: MapStyle? = null
+    var wantedStyle: MapStyle = MapStyle.DARK
+    var onStyleReady: (() -> Unit)? = null
+    var lastFollowMs: Long = 0L
+    var inViewPlanes: Int = 0
+    var pinsInView: Int = 0
+    var pinsDrawn: Int = 0
     var callback: Choreographer.FrameCallback? = null
     var frameListener: MapView.OnDidFinishRenderingFrameListener? = null
     var created: Boolean = false
@@ -303,6 +343,26 @@ private class MapHolder {
     var sy = FloatArray(0)
     val renderedFrames = AtomicInteger(0)
     val frameWindowStartMs = AtomicLong(0L)
+}
+
+private fun loadStyle(map: MapLibreMap, holder: MapHolder, vm: SkyViewModel, mapView: MapView) {
+    val wanted = holder.wantedStyle
+    if (holder.loadedStyle == wanted) return
+    holder.loadedStyle = wanted
+    holder.style = null
+    map.setStyle(styleBuilder(wanted)) { style ->
+        if (holder.loadedStyle != wanted || !holder.alive) return@setStyle
+        if (wanted == MapStyle.TERRAIN) addTerrain(style)
+        vm.planeSymbols = install(style, vm.airports, mapView.context)
+        holder.airportsSent = vm.airports.isNotEmpty()
+        holder.planesSource = style.getSourceAs("planes")
+        holder.trailSource = style.getSourceAs("trail")
+        holder.trailClear = false
+        holder.drawn.reset()
+        holder.style = style
+        if (!holder.appliedOpening) applyOpening(map, holder)
+        holder.onStyleReady?.invoke()
+    }
 }
 
 private fun applyOpening(map: MapLibreMap, holder: MapHolder) {
@@ -332,9 +392,12 @@ private fun noteRenderedFrame(
     val fps = counted * 1000.0 / elapsed.toDouble()
     val drawn = holder.drawnPlanes
     val total = holder.totalPlanes
+    val inView = holder.inViewPlanes
+    val pins = "${holder.pinsDrawn}/${holder.pinsInView}"
+    val zoom = holder.map?.cameraPosition?.zoom ?: 0.0
     mapView.post {
         if (!holder.alive) return@post
-        val line = formatFpsLine(fps, drawn, total)
+        val line = formatFpsLine(fps, drawn, total) + String.format(Locale.US, " inview=%d pins=%s z=%.1f", inView, pins, zoom)
         Log.i(FPS_TAG, line)
         onFpsLine?.invoke(line)
     }
@@ -371,8 +434,7 @@ private fun projectPlanes(map: MapLibreMap, planes: List<VisiblePlane>, holder: 
 
 private fun install(style: Style, airports: List<Airport>, context: Context): PlaneSymbols {
     for (kind in Silhouette.entries) {
-        style.addImage(kind.name, aircraftIcon(context, kind, selected = false))
-        style.addImage("${kind.name}-sel", aircraftIcon(context, kind, selected = true))
+        style.addImage(kind.name, iconCache.getOrPut(kind) { aircraftIcon(context, kind) }, true)
     }
     style.addSource(GeoJsonSource("airports", airportsJson(airports)))
     style.addSource(GeoJsonSource("trail", EMPTY))
@@ -455,6 +517,22 @@ private fun install(style: Style, airports: List<Airport>, context: Context): Pl
         PropertyFactory.iconAllowOverlap(true),
         PropertyFactory.iconIgnorePlacement(true),
         PropertyFactory.iconOpacity(Expression.get("op")),
+        PropertyFactory.iconColor(
+            Expression.switchCase(
+                Expression.eq(Expression.get("sel"), true),
+                Expression.color(SELECTED_AMBER),
+                Expression.interpolate(
+                    Expression.linear(),
+                    Expression.get("alt"),
+                    Expression.stop(0, Expression.color(0xFF7CF29A.toInt())),
+                    Expression.stop(10_000, Expression.color(0xFF35D6F0.toInt())),
+                    Expression.stop(25_000, Expression.color(0xFF6FA8FF.toInt())),
+                    Expression.stop(40_000, Expression.color(0xFFD08CFF.toInt())),
+                ),
+            ),
+        ),
+        PropertyFactory.iconHaloColor("rgba(4,6,10,0.9)"),
+        PropertyFactory.iconHaloWidth(1.6f),
         PropertyFactory.iconSize(
             Expression.interpolate(
                 Expression.linear(),
@@ -489,11 +567,13 @@ private fun iconScaleExpression(): Expression {
         val scale = iconScale(kind)
         if (scale != 1.0) {
             stops += Expression.stop(kind.name, scale)
-            stops += Expression.stop("${kind.name}-sel", scale)
         }
     }
     return Expression.match(Expression.get("icon"), Expression.literal(1.0), *stops.toTypedArray())
 }
+
+private const val SELECTED_AMBER = 0xFFFFB020.toInt()
+private val iconCache = HashMap<Silhouette, android.graphics.Bitmap>()
 
 private fun scaledStop(zoom: Double, size: Double): Expression.Stop {
     return Expression.stop(zoom, Expression.product(Expression.literal(size), iconScaleExpression()))

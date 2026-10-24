@@ -1,10 +1,10 @@
 package com.zot24.skytrace
 
-const val PLANE_CULL_ZOOM = 7.0
+const val PLANE_CULL_ZOOM = 8.0
 const val LOW_ZOOM_PUSH_MS = 200L
 const val HIGH_ZOOM_PUSH_MS = 50L
 const val PLANE_LAYER_ID = "plane-symbols"
-const val HIT_HALF_DP = 24f
+const val HIT_HALF_DP = 32f
 
 data class PlaneHit(val hex: String, val x: Float, val y: Float)
 
@@ -81,6 +81,11 @@ class DrawnIndex {
         this.trailSig = trailSig
     }
 
+    fun reset() {
+        x.clear()
+        selected = "\u0000"
+    }
+
     fun forEachGeo(block: (hex: String, lat: Double, lon: Double) -> Unit) {
         for ((hex, latitude) in lat) {
             val longitude = lon[hex] ?: continue
@@ -130,13 +135,13 @@ fun trailSignature(trails: List<List<Pair<Double, Double>>>): Int {
     return signature
 }
 
-fun appendPlaneJson(out: StringBuilder, planes: List<VisiblePlane>, selected: String?) {
+fun appendPlaneJson(out: StringBuilder, planes: List<VisiblePlane>, selected: String?, pins: Set<String>, favourites: Set<String>) {
     out.setLength(0)
     out.append("{\"type\":\"FeatureCollection\",\"features\":[")
     for (i in planes.indices) {
         if (i > 0) out.append(',')
         val plane = planes[i]
-        val icon = if (plane.hex == selected) "${plane.silhouette.name}-sel" else plane.silhouette.name
+        val icon = plane.silhouette.name
         out.append("{\"type\":\"Feature\",\"properties\":{\"hex\":\"")
         appendJsonString(out, plane.hex)
         out.append("\",\"icon\":\"")
@@ -147,6 +152,14 @@ fun appendPlaneJson(out: StringBuilder, planes: List<VisiblePlane>, selected: St
         out.append(plane.trackDeg)
         out.append(",\"op\":")
         out.append(plane.opacity.toDouble())
+        out.append(",\"alt\":")
+        out.append(plane.altFt.toInt())
+        out.append(",\"sel\":")
+        out.append(plane.hex == selected)
+        out.append(",\"pin\":")
+        out.append(plane.hex in pins)
+        out.append(",\"fav\":")
+        out.append(plane.hex in favourites)
         out.append("},\"geometry\":{\"type\":\"Point\",\"coordinates\":[")
         out.append(plane.lon)
         out.append(',')

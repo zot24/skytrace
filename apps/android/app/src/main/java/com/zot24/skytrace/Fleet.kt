@@ -130,6 +130,8 @@ class Fleet {
         return out
     }
 
+    fun snapshotFor(hexes: Set<String>, now: Long): List<VisiblePlane> = hexes.mapNotNull { one(it, now) }
+
     fun one(hex: String, now: Long): VisiblePlane? {
         prune(now)
         val item = craft[hex] ?: return null
