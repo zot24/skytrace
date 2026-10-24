@@ -84,7 +84,7 @@ fun SkyScreen(vm: SkyViewModel = viewModel()) {
             vm,
             Modifier.fillMaxSize(),
             onFpsLine = if (BuildConfig.DEBUG) ({ fpsLine = it }) else null,
-            onMapDown = dismissSearch,
+            onUserGesture = { if (searchOpen) dismissSearch() },
         )
         Column(
             Modifier

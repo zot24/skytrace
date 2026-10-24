@@ -64,6 +64,7 @@ private data class Craft(
 class Fleet {
     private val craft = LinkedHashMap<String, Craft>()
     private val trails = HashMap<String, ArrayDeque<Triple<Double, Double, Long>>>()
+    private val deadScratch = ArrayList<String>(8)
 
     fun accept(rows: List<PlaneRow>, now: Long, fresh: Boolean) {
         if (!fresh) {
@@ -136,8 +137,12 @@ class Fleet {
     }
 
     private fun prune(now: Long) {
-        val dead = craft.filterValues { now - it.fixAtMs >= COAST_MS + FADE_MS }.keys.toList()
-        for (hex in dead) {
+        deadScratch.clear()
+        for ((hex, item) in craft) {
+            if (now - item.fixAtMs >= COAST_MS + FADE_MS) deadScratch.add(hex)
+        }
+        for (index in deadScratch.indices) {
+            val hex = deadScratch[index]
             craft.remove(hex)
             trails.remove(hex)
         }

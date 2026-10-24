@@ -66,6 +66,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
     var selected by mutableStateOf<String?>(null)
     var detail by mutableStateOf<PlaneDetail?>(null)
     var baseUrl by mutableStateOf(DEFAULT_BASE)
+    var planeSymbols: PlaneSymbols? = null
     var airports by mutableStateOf<List<Airport>>(emptyList())
     val favouriteAircraft = MutableStateFlow<Set<String>>(emptySet())
     val favouriteAirports = MutableStateFlow<Set<String>>(emptySet())
@@ -165,7 +166,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
         val hex = selected
         val padded = padView(view)
         val inView = fleet.visible(now, padded.south, padded.north, padded.west, padded.east, hex)
-        val planes = if (zoom < 5.5) thin(inView, padded, hex) else inView
+        val planes = if (zoom < PLANE_CULL_ZOOM) thin(inView, padded, hex) else inView
         val trails = if (hex == null) {
             emptyList()
         } else {
