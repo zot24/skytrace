@@ -29,7 +29,7 @@ body {
 
 header {
   position: absolute;
-  z-index: 2;
+  z-index: 3;
   top: 14px;
   left: 14px;
   right: 14px;
@@ -132,8 +132,8 @@ header > * {
   position: absolute;
   z-index: 2;
   top: 86px;
-  right: 14px;
-  width: 280px;
+  left: 14px;
+  width: min(280px, calc(100vw - 480px));
   border-radius: 16px;
   padding: 16px 16px 14px;
 }
@@ -223,6 +223,10 @@ header > * {
   #search {
     width: 100%;
     margin-left: 0;
+  }
+
+  #hits {
+    max-height: min(280px, calc(100dvh - 400px));
   }
 
   #panel {
