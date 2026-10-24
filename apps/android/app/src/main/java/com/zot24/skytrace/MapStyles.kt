@@ -28,8 +28,8 @@ fun styleBuilder(style: MapStyle): Style.Builder = when (style) {
 
 fun addTerrain(style: Style) {
     val tiles = TileSet("2.2.0", "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png")
-    tiles.setEncoding("terrarium")
-    tiles.setMaxZoom(15f)
+    tiles.encoding = "terrarium"
+    tiles.maxZoom = 15f
     style.addSource(RasterDemSource("dem", tiles, 256))
     val shade = HillshadeLayer("hillshade", "dem").withProperties(
         PropertyFactory.hillshadeExaggeration(0.55f),
