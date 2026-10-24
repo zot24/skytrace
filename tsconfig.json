@@ -14,5 +14,6 @@
     "allowUmdGlobalAccess": true,
     "types": ["geojson"]
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "vite.config.ts"],
+  "exclude": ["apps", "node_modules", "dist"]
 }
