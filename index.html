@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>skytrace</title>
+  </head>
+  <body>
+    <div id="map"></div>
+    <header>
+      <div class="brand">
+        <strong>skytrace</strong>
+        <span id="stat">loading map</span>
+      </div>
+      <form id="search" role="search">
+        <label class="sr" for="q">Search airports by name, IATA, or ICAO</label>
+        <input id="q" name="q" placeholder="Search airport — name, IATA, ICAO" autocomplete="off" spellcheck="false" />
+        <ul id="hits" hidden></ul>
+      </form>
+    </header>
+    <aside id="panel" hidden>
+      <button id="close" type="button" aria-label="Close">×</button>
+      <p id="p-cs"></p>
+      <dl>
+        <div><dt>Type</dt><dd id="p-type"></dd></div>
+        <div><dt>Registration</dt><dd id="p-reg"></dd></div>
+        <div><dt>Altitude</dt><dd id="p-alt"></dd></div>
+        <div><dt>Ground speed</dt><dd id="p-gs"></dd></div>
+        <div><dt>Heading</dt><dd id="p-hdg"></dd></div>
+      </dl>
+    </aside>
+    <footer id="credits">
+      ADS-B data © adsb.lol contributors (ODbL)
+      · OpenSky Network (non-commercial fallback)
+      · Airports © OurAirports (public domain)
+      · Map © OpenFreeMap
+      · © OpenStreetMap contributors
+    </footer>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
