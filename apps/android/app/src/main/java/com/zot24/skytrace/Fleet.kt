@@ -6,8 +6,8 @@ import kotlin.math.max
 import kotlin.math.sin
 
 const val COAST_MS = 60_000L
-const val FADE_MS = 20_000L
-const val EASE_MS = 2_000L
+const val FADE_MS = 10_000L
+const val EASE_MS = 1_000L
 
 data class PlaneRow(
     val hex: String,
@@ -121,10 +121,9 @@ class Fleet {
     ): List<VisiblePlane> {
         prune(now)
         val out = ArrayList<VisiblePlane>(craft.size)
-        val world = north - south > 150.0 && east - west > 300.0
         for (item in craft.values) {
             val pose = pose(item, now) ?: continue
-            val keep = item.row.hex == alwaysHex || world || inside(pose.lon, pose.lat, south, north, west, east)
+            val keep = item.row.hex == alwaysHex || inside(pose.lon, pose.lat, south, north, west, east)
             if (keep) out.add(pose)
         }
         return out

@@ -1,5 +1,6 @@
 package com.zot24.skytrace
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -30,6 +31,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -59,13 +62,29 @@ fun SkyScreen(vm: SkyViewModel = viewModel()) {
     var fpsLine by remember { mutableStateOf<String?>(null) }
     val hits = if (query.isBlank()) emptyList() else searchAirports(vm.airports, query)
     val showFavs = focused && query.isBlank()
+    val searchOpen = focused || query.isNotBlank()
     val countText = NumberFormat.getIntegerInstance(Locale.US).format(vm.count)
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    val dismissSearch = {
+        keyboard?.hide()
+        focusManager.clearFocus(force = true)
+        if (query.isNotEmpty()) query = ""
+    }
+    BackHandler(enabled = about || searchOpen || vm.detail != null) {
+        when {
+            about -> about = false
+            searchOpen -> dismissSearch()
+            else -> vm.closeDetail()
+        }
+    }
 
     Box(Modifier.fillMaxSize().background(Ink)) {
         SkyMap(
             vm,
             Modifier.fillMaxSize(),
             onFpsLine = if (BuildConfig.DEBUG) ({ fpsLine = it }) else null,
+            onMapDown = dismissSearch,
         )
         Column(
             Modifier
@@ -99,27 +118,42 @@ fun SkyScreen(vm: SkyViewModel = viewModel()) {
                 }
             }
             Spacer(Modifier.height(8.dp))
-            BasicTextField(
-                value = query,
-                onValueChange = { query = it },
-                textStyle = TextStyle(color = Paper, fontSize = 14.sp),
-                cursorBrush = SolidColor(Gold),
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search, autoCorrectEnabled = false),
-                modifier = Modifier
+            Row(
+                Modifier
                     .fillMaxWidth()
-                    .onFocusChanged { focused = it.isFocused }
                     .clip(RoundedCornerShape(999.dp))
                     .background(Panel)
                     .border(1.dp, Line, RoundedCornerShape(999.dp))
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                decorationBox = { inner ->
-                    if (query.isEmpty()) {
-                        Text("Search airport — name, IATA, ICAO", color = Muted, fontSize = 14.sp)
-                    }
-                    inner()
-                },
-            )
+                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                BasicTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    textStyle = TextStyle(color = Paper, fontSize = 14.sp),
+                    cursorBrush = SolidColor(Gold),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search, autoCorrectEnabled = false),
+                    modifier = Modifier
+                        .weight(1f)
+                        .onFocusChanged { focused = it.isFocused }
+                        .padding(vertical = 4.dp),
+                    decorationBox = { inner ->
+                        if (query.isEmpty()) {
+                            Text("Search airport — name, IATA, ICAO", color = Muted, fontSize = 14.sp)
+                        }
+                        inner()
+                    },
+                )
+                if (searchOpen) {
+                    Text(
+                        "×",
+                        color = Muted,
+                        fontSize = 20.sp,
+                        modifier = Modifier.clickable { dismissSearch() }.padding(start = 8.dp, top = 2.dp, bottom = 2.dp),
+                    )
+                }
+            }
             if (hits.isNotEmpty() || showFavs) {
                 Column(
                     Modifier

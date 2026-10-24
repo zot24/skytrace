@@ -48,4 +48,4 @@ Category A7 is drawn as a medium helicopter. The category does not carry a weigh
 
 ## Motion
 
-Every frame dead-reckons from the last fresh ground speed and track. A new fix eases in over 2 seconds, so the icon does not jump. A stale payload or HTTP 429 does not refresh that fix and does not remove aircraft. Full opacity lasts 60 seconds from the last fresh fix. The icon then fades over 20 seconds and is removed. A fresh snapshot removes aircraft that are no longer in the feed.
+Every frame dead-reckons from the last fresh ground speed and track. A new fix eases in over 1 second, so the icon does not jump. A stale payload or HTTP 429 does not refresh that fix and does not remove aircraft. Full opacity lasts 60 seconds from the last fresh fix. The icon then fades over 10 seconds and is removed. A fresh snapshot removes aircraft that are no longer in the feed.

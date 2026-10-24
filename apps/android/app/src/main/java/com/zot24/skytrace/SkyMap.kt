@@ -1,16 +1,26 @@
 package com.zot24.skytrace
 
 import android.content.Context
+import android.graphics.RectF
 import android.os.SystemClock
 import android.util.Log
 import android.view.Choreographer
+import android.view.MotionEvent
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
+import com.google.gson.JsonObject
+import org.maplibre.geojson.Feature
+import org.maplibre.geojson.FeatureCollection
+import org.maplibre.geojson.LineString
+import org.maplibre.geojson.Point
+import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -31,17 +41,25 @@ import java.util.Locale
 private const val STYLE_URL = "https://tiles.openfreemap.org/styles/dark"
 private const val EMPTY = """{"type":"FeatureCollection","features":[]}"""
 private const val FPS_TAG = "skytrace-fps"
+private const val PUSH_MS = 50L
 
 @Composable
 fun SkyMap(
     vm: SkyViewModel,
     modifier: Modifier = Modifier,
     onFpsLine: ((String) -> Unit)? = null,
+    onMapDown: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val mapView = remember { MapView(context) }
     val holder = remember { MapHolder() }
+    val onDownState = rememberUpdatedState(onMapDown)
+    val geoExecutor = remember {
+        Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "skytrace-geo").apply { isDaemon = true }
+        }
+    }
 
     DisposableEffect(lifecycle, mapView) {
         val observer = LifecycleEventObserver { _, event ->
@@ -59,8 +77,10 @@ fun SkyMap(
         }
         lifecycle.addObserver(observer)
         onDispose {
+            holder.alive = false
             holder.map?.setOnFpsChangedListener(null)
             holder.callback?.let { Choreographer.getInstance().removeFrameCallback(it) }
+            geoExecutor.shutdownNow()
             lifecycle.removeObserver(observer)
             mapView.onPause()
             mapView.onStop()
@@ -69,7 +89,15 @@ fun SkyMap(
     }
 
     LaunchedEffect(mapView) {
+        vm.opening.collect { jump ->
+            holder.desired = jump
+            holder.map?.let { applyOpening(it, holder) }
+        }
+    }
+
+    LaunchedEffect(mapView) {
         vm.camera.collect { jump ->
+            holder.followJump = true
             holder.map?.animateCamera(
                 CameraUpdateFactory.newLatLngZoom(LatLng(jump.lat, jump.lon), jump.zoom),
                 1400,
@@ -80,16 +108,36 @@ fun SkyMap(
     AndroidView(
         modifier = modifier,
         factory = {
+            mapView.isFocusableInTouchMode = true
+            mapView.setOnTouchListener { _, event ->
+                if (event.actionMasked == MotionEvent.ACTION_DOWN) onDownState.value.invoke()
+                false
+            }
             mapView.getMapAsync { map ->
                 holder.map = map
+                map.addOnCameraMoveStartedListener { reason ->
+                    if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) {
+                        holder.userMoved = true
+                    }
+                }
+                map.addOnCameraIdleListener {
+                    if (!holder.appliedOpening) return@addOnCameraIdleListener
+                    val target = map.cameraPosition.target ?: return@addOnCameraIdleListener
+                    vm.rememberView(
+                        target.latitude,
+                        target.longitude,
+                        map.cameraPosition.zoom,
+                        holder.userMoved || holder.followJump,
+                    )
+                }
                 if (BuildConfig.DEBUG) {
-                    // MapLibre invokes this on the GL thread. The header state is main-thread only.
+                    // MapLibre invokes this on the GL thread. Compose state is main-thread only.
                     map.setOnFpsChangedListener { fps ->
                         val now = SystemClock.elapsedRealtime()
                         if (now - holder.lastFpsLogMs < 1_000L) return@setOnFpsChangedListener
                         holder.lastFpsLogMs = now
                         mapView.post {
-                            val line = formatFpsLine(fps, holder.drawnPlanes)
+                            val line = formatFpsLine(fps, holder.drawnPlanes, holder.totalPlanes)
                             Log.i(FPS_TAG, line)
                             onFpsLine?.invoke(line)
                         }
@@ -100,29 +148,65 @@ fun SkyMap(
                 map.setStyle(Style.Builder().fromUri(STYLE_URL)) { style ->
                     install(style, vm.airports, mapView.context)
                     holder.airportsSent = vm.airports.isNotEmpty()
-                    map.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(24.0, 12.0), 1.8))
+                    applyOpening(map, holder)
                     val planes = style.getSourceAs<GeoJsonSource>("planes")
                     val trail = style.getSourceAs<GeoJsonSource>("trail")
                     val callback = object : Choreographer.FrameCallback {
                         override fun doFrame(frameTimeNanos: Long) {
-                            val now = System.currentTimeMillis()
+                            if (!holder.alive) return
+                            val clock = SystemClock.elapsedRealtime()
+                            if (holder.pushBusy || clock - holder.lastPushMs < PUSH_MS) {
+                                Choreographer.getInstance().postFrameCallback(this)
+                                return
+                            }
+                            holder.lastPushMs = clock
                             val bounds = map.projection.visibleRegion.latLngBounds
-                            val picture = vm.prepareFrame(
-                                now,
-                                ViewBox(
-                                    bounds.latitudeSouth,
-                                    bounds.latitudeNorth,
-                                    bounds.longitudeWest,
-                                    bounds.longitudeEast,
-                                ),
+                            val view = ViewBox(
+                                bounds.latitudeSouth,
+                                bounds.latitudeNorth,
+                                bounds.longitudeWest,
+                                bounds.longitudeEast,
                             )
                             if (!holder.airportsSent && vm.airports.isNotEmpty()) {
                                 style.getSourceAs<GeoJsonSource>("airports")?.setGeoJson(airportsJson(vm.airports))
                                 holder.airportsSent = true
                             }
-                            planes?.setGeoJson(planesJson(picture.planes, vm.selected))
-                            trail?.setGeoJson(trailJson(picture.trails))
-                            holder.drawnPlanes = picture.planes.size
+                            val picture = vm.prepareFrame(System.currentTimeMillis(), view, map.cameraPosition.zoom)
+                            val selected = vm.selected
+                            holder.pushBusy = true
+                            try {
+                                geoExecutor.execute {
+                                    val built = try {
+                                        buildFrame(picture, selected)
+                                    } catch (error: Exception) {
+                                        Log.e("skytrace-geo", "plane frame failed", error)
+                                        null
+                                    }
+                                    val publish = Runnable {
+                                        try {
+                                            if (holder.alive && built != null) {
+                                                planes?.setGeoJson(built.planes)
+                                                if (picture.trails.isNotEmpty() || !holder.trailClear) {
+                                                    trail?.setGeoJson(built.trails)
+                                                    holder.trailClear = picture.trails.isEmpty()
+                                                }
+                                                holder.drawnPlanes = picture.planes.size
+                                                holder.totalPlanes = picture.total
+                                                val maintained = SystemClock.elapsedRealtime()
+                                                if (maintained - holder.lastMaintainMs >= 1_000L) {
+                                                    holder.lastMaintainMs = maintained
+                                                    vm.maintainSelection(System.currentTimeMillis())
+                                                }
+                                            }
+                                        } finally {
+                                            holder.pushBusy = false
+                                        }
+                                    }
+                                    if (!mapView.post(publish)) holder.pushBusy = false
+                                }
+                            } catch (_: RejectedExecutionException) {
+                                holder.pushBusy = false
+                            }
                             Choreographer.getInstance().postFrameCallback(this)
                         }
                     }
@@ -131,9 +215,12 @@ fun SkyMap(
                 }
                 map.addOnMapClickListener { latLng ->
                     val screen = map.projection.toScreenLocation(latLng)
-                    vm.onTap(screen.x, screen.y, System.currentTimeMillis()) { lon, lat ->
-                        map.projection.toScreenLocation(LatLng(lat, lon))
+                    val half = 12f * mapView.resources.displayMetrics.density
+                    val box = RectF(screen.x - half, screen.y - half, screen.x + half, screen.y + half)
+                    val hex = map.queryRenderedFeatures(box, "plane-symbols").firstNotNullOfOrNull { feature ->
+                        feature.getStringProperty("hex")?.takeIf { it.isNotEmpty() }
                     }
+                    vm.onPlaneHit(hex, System.currentTimeMillis())
                     true
                 }
             }
@@ -148,11 +235,28 @@ private class MapHolder {
     var created: Boolean = false
     var airportsSent: Boolean = false
     var drawnPlanes: Int = 0
+    var totalPlanes: Int = 0
     var lastFpsLogMs: Long = 0L
+    var lastPushMs: Long = 0L
+    var lastMaintainMs: Long = 0L
+    var pushBusy: Boolean = false
+    var alive: Boolean = true
+    var appliedOpening: Boolean = false
+    var userMoved: Boolean = false
+    var followJump: Boolean = false
+    var trailClear: Boolean = true
+    var desired: CameraJump = BUSY_OPENING
 }
 
-private fun formatFpsLine(fps: Double, planes: Int): String {
-    return String.format(Locale.US, "fps=%.1f planes=%d", fps, planes)
+private fun applyOpening(map: MapLibreMap, holder: MapHolder) {
+    if (holder.userMoved) return
+    val jump = holder.desired
+    map.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(jump.lat, jump.lon), jump.zoom))
+    holder.appliedOpening = true
+}
+
+private fun formatFpsLine(fps: Double, drawn: Int, total: Int): String {
+    return String.format(Locale.US, "fps=%.1f drawn=%d total=%d", fps, drawn, total)
 }
 
 private fun install(style: Style, airports: List<Airport>, context: Context) {
@@ -245,7 +349,8 @@ private fun install(style: Style, airports: List<Airport>, context: Context) {
             Expression.interpolate(
                 Expression.linear(),
                 Expression.zoom(),
-                scaledStop(2.0, 0.42),
+                scaledStop(1.0, 0.22),
+                scaledStop(2.0, 0.36),
                 scaledStop(6.0, 0.58),
                 scaledStop(11.0, 0.78),
                 scaledStop(14.0, 1.0),
@@ -298,49 +403,26 @@ private fun airportsJson(airports: List<Airport>): String {
     return sb.toString()
 }
 
-private fun planesJson(planes: List<VisiblePlane>, selected: String?): String {
-    val sb = StringBuilder(planes.size * 140)
-    sb.append("{\"type\":\"FeatureCollection\",\"features\":[")
-    planes.forEachIndexed { index, plane ->
-        if (index > 0) sb.append(',')
-        val icon = if (plane.hex == selected) "${plane.silhouette.name}-sel" else plane.silhouette.name
-        sb.append("{\"type\":\"Feature\",\"properties\":{\"icon\":\"")
-        sb.append(icon)
-        sb.append("\",\"hdg\":")
-        sb.append(plane.trackDeg)
-        sb.append(",\"op\":")
-        sb.append(plane.opacity)
-        sb.append("},\"geometry\":{\"type\":\"Point\",\"coordinates\":[")
-        sb.append(plane.lon)
-        sb.append(',')
-        sb.append(plane.lat)
-        sb.append("]}}")
-    }
-    sb.append("]}")
-    return sb.toString()
-}
+private data class BuiltFrame(val planes: FeatureCollection, val trails: FeatureCollection)
 
-private fun trailJson(segments: List<List<Pair<Double, Double>>>): String {
-    val sb = StringBuilder()
-    sb.append("{\"type\":\"FeatureCollection\",\"features\":[")
-    var written = 0
-    for (segment in segments) {
-        if (segment.size < 2) continue
-        if (written > 0) sb.append(',')
-        written += 1
-        sb.append("{\"type\":\"Feature\",\"properties\":{},\"geometry\":{\"type\":\"LineString\",\"coordinates\":[")
-        segment.forEachIndexed { index, point ->
-            if (index > 0) sb.append(',')
-            sb.append('[')
-            sb.append(point.first)
-            sb.append(',')
-            sb.append(point.second)
-            sb.append(']')
-        }
-        sb.append("]}}")
+private fun buildFrame(picture: FramePicture, selected: String?): BuiltFrame {
+    val features = ArrayList<Feature>(picture.planes.size)
+    for (plane in picture.planes) {
+        val icon = if (plane.hex == selected) "${plane.silhouette.name}-sel" else plane.silhouette.name
+        val props = JsonObject()
+        props.addProperty("hex", plane.hex)
+        props.addProperty("icon", icon)
+        props.addProperty("hdg", plane.trackDeg)
+        props.addProperty("op", plane.opacity.toDouble())
+        features.add(Feature.fromGeometry(Point.fromLngLat(plane.lon, plane.lat), props, plane.hex))
     }
-    sb.append("]}")
-    return sb.toString()
+    val trails = ArrayList<Feature>()
+    for (segment in picture.trails) {
+        if (segment.size < 2) continue
+        val line = LineString.fromLngLats(segment.map { Point.fromLngLat(it.first, it.second) })
+        trails.add(Feature.fromGeometry(line))
+    }
+    return BuiltFrame(FeatureCollection.fromFeatures(features), FeatureCollection.fromFeatures(trails))
 }
 
 private fun jsonEscape(value: String): String {

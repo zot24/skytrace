@@ -36,14 +36,14 @@ class MotionTest {
         assertEquals(0.0, at60.lat, 1e-9)
         assertEquals(0.1, at60.lon, 1e-9)
 
-        val at70 = fleet.one("abc123", 70_000L)!!
-        assertEquals(0.5f, at70.opacity, 0.0001f)
-        assertEquals(0.0, at70.lat, 1e-9)
-        assertEquals(0.11666666666666667, at70.lon, 1e-9)
-        assertTrue(at70.lon > at60.lon)
+        val at65 = fleet.one("abc123", 65_000L)!!
+        assertEquals(0.5f, at65.opacity, 0.0001f)
+        assertEquals(0.0, at65.lat, 1e-9)
+        assertEquals(0.10833333333333334, at65.lon, 1e-9)
+        assertTrue(at65.lon > at60.lon)
 
-        assertNull(fleet.one("abc123", 80_000L))
-        assertEquals(0, fleet.tracked(80_000L))
+        assertNull(fleet.one("abc123", 70_000L))
+        assertEquals(0, fleet.tracked(70_000L))
     }
 
     @Test
@@ -56,13 +56,13 @@ class MotionTest {
         assertEquals(0.0, sameInstant.lat, 1e-12)
         assertEquals(0.016666666666666666, sameInstant.lon, 1e-12)
 
-        val halfway = fleet.one("abc123", 11_000L)!!
+        val halfway = fleet.one("abc123", 10_500L)!!
         assertEquals(0.0, halfway.lat, 1e-12)
-        assertEquals(0.009166666666666666, halfway.lon, 1e-12)
+        assertEquals(0.00875, halfway.lon, 1e-12)
 
-        val settled = fleet.one("abc123", 12_000L)!!
+        val settled = fleet.one("abc123", 11_000L)!!
         assertEquals(0.0, settled.lat, 1e-12)
-        assertEquals(0.0033333333333333335, settled.lon, 1e-12)
+        assertEquals(0.0016666666666666668, settled.lon, 1e-12)
     }
 
     @Test

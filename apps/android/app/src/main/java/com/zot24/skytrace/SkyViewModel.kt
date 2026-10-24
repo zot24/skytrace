@@ -1,7 +1,7 @@
 package com.zot24.skytrace
 
 import android.app.Application
-import android.graphics.PointF
+import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -23,18 +23,25 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.Locale
 import java.util.concurrent.TimeUnit
+import kotlin.math.abs
+import kotlin.math.floor
+import kotlin.math.max
 import kotlin.math.roundToInt
 
 const val DEFAULT_BASE = "http://10.0.2.2:8787"
 
 private val Application.store by preferencesDataStore("skytrace")
 private val keyUrl = stringPreferencesKey("base_url")
+private val keyCamera = stringPreferencesKey("camera")
 private val keyAircraft = stringSetPreferencesKey("fav_aircraft")
 private val keyAirports = stringSetPreferencesKey("fav_airports")
+private const val COUNT_TAG = "skytrace-count"
 
 data class ViewBox(val south: Double, val north: Double, val west: Double, val east: Double)
 
 data class CameraJump(val lat: Double, val lon: Double, val zoom: Double)
+
+val BUSY_OPENING = CameraJump(40.72, -73.98, 6.0)
 
 data class PlaneDetail(
     val hex: String,
@@ -49,6 +56,7 @@ data class PlaneDetail(
 data class FramePicture(
     val planes: List<VisiblePlane>,
     val trails: List<List<Pair<Double, Double>>>,
+    val total: Int,
 )
 
 class SkyViewModel(app: Application) : AndroidViewModel(app) {
@@ -62,17 +70,24 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
     val favouriteAircraft = MutableStateFlow<Set<String>>(emptySet())
     val favouriteAirports = MutableStateFlow<Set<String>>(emptySet())
     val camera = MutableSharedFlow<CameraJump>(extraBufferCapacity = 1)
+    val opening = MutableStateFlow(BUSY_OPENING)
 
     private var box: ViewBox? = null
     private var attempt = 0
-    private var lastUi = 0L
     private var lastTrail = 0L
+    private var lastSavedCamera: String? = null
+    private var cameraWritable = false
     private val http = OkHttpClient.Builder().callTimeout(20, TimeUnit.SECONDS).build()
 
     init {
         viewModelScope.launch {
             val prefs = getApplication<Application>().store.data.first()
             applyPrefs(prefs[keyUrl], prefs[keyAircraft], prefs[keyAirports])
+            val saved = parseCamera(prefs[keyCamera])
+            val cam = saved ?: BUSY_OPENING
+            lastSavedCamera = if (saved != null) formatCamera(cam) else null
+            cameraWritable = true
+            opening.value = cam
             launch {
                 getApplication<Application>().store.data.collect { next ->
                     applyPrefs(next[keyUrl], next[keyAircraft], next[keyAirports])
@@ -110,21 +125,22 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
         camera.tryEmit(CameraJump(plane.lat, plane.lon, 7.0))
     }
 
-    fun onTap(x: Float, y: Float, now: Long, project: (Double, Double) -> PointF) {
-        var best: String? = null
-        var bestD = 36f * 36f
-        for (plane in fleet.visible(now)) {
-            val point = project(plane.lon, plane.lat)
-            val dx = point.x - x
-            val dy = point.y - y
-            val d = dx * dx + dy * dy
-            if (d < bestD) {
-                bestD = d
-                best = plane.hex
-            }
+    fun onPlaneHit(hex: String?, now: Long) {
+        if (hex.isNullOrEmpty()) return
+        val plane = fleet.one(hex, now) ?: return
+        selected = hex
+        detail = toDetail(plane)
+    }
+
+    fun rememberView(lat: Double, lon: Double, zoom: Double, pinned: Boolean) {
+        if (!cameraWritable) return
+        if (!pinned && !nearOpening(lat, lon, zoom)) return
+        val encoded = formatCamera(CameraJump(lat, lon, zoom))
+        if (encoded == lastSavedCamera) return
+        lastSavedCamera = encoded
+        viewModelScope.launch {
+            getApplication<Application>().store.edit { it[keyCamera] = encoded }
         }
-        selected = best
-        detail = best?.let { fleet.one(it, now) }?.let { toDetail(it) }
     }
 
     fun closeDetail() {
@@ -132,21 +148,24 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
         detail = null
     }
 
-    fun prepareFrame(now: Long, view: ViewBox): FramePicture {
+    fun maintainSelection(now: Long) {
+        count = fleet.tracked(now)
+        val hex = selected ?: return
+        val plane = fleet.one(hex, now)
+        if (plane == null) {
+            selected = null
+            detail = null
+        } else {
+            detail = toDetail(plane)
+        }
+    }
+
+    fun prepareFrame(now: Long, view: ViewBox, zoom: Double): FramePicture {
         box = view
         val hex = selected
-        if (now - lastUi >= 250L) {
-            lastUi = now
-            count = fleet.tracked(now)
-            val plane = hex?.let { fleet.one(it, now) }
-            if (hex != null && plane == null) {
-                selected = null
-                detail = null
-            } else if (plane != null) {
-                detail = toDetail(plane)
-            }
-        }
-        val planes = fleet.visible(now, view.south - 2.0, view.north + 2.0, view.west - 2.0, view.east + 2.0, hex)
+        val padded = padView(view)
+        val inView = fleet.visible(now, padded.south, padded.north, padded.west, padded.east, hex)
+        val planes = if (zoom < 5.5) thin(inView, padded, hex) else inView
         val trails = if (hex == null) {
             emptyList()
         } else {
@@ -157,7 +176,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
             }
             fleet.trailSegments(hex, now)
         }
-        return FramePicture(planes, trails)
+        return FramePicture(planes, trails, fleet.tracked(now))
     }
 
     private fun toggle(key: androidx.datastore.preferences.core.Preferences.Key<Set<String>>, id: String) {
@@ -206,12 +225,14 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
         if (fetched == null) {
             attempt += 1
             markStale(source, now)
+            logCount(0, true)
             return nextPollDelay(false, attempt, 0L)
         }
         val (code, body) = fetched
         if (body == null) {
             attempt += 1
             markStale(source, now)
+            logCount(0, true)
             return nextPollDelay(false, attempt, 0L)
         }
         val fresh = code in 200..299 && !body.stale && body.src != "none" && body.rows.isNotEmpty()
@@ -221,13 +242,24 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
             source = body.src.ifBlank { "adsb.lol" }
             count = fleet.tracked(now)
             refreshDetail(now)
+            logCount(body.rows.size, false)
             return nextPollDelay(true, 0, 0L)
         }
         fleet.accept(body.rows, now, fresh = false)
         attempt += 1
         val label = body.src.takeIf { it.isNotBlank() && it != "none" } ?: source
         markStale(label, now)
+        logCount(body.rows.size, true)
         return nextPollDelay(false, attempt, body.retryAfterMs)
+    }
+
+    private fun logCount(rows: Int, stale: Boolean) {
+        Log.i(COUNT_TAG, "total=$count rows=$rows stale=$stale")
+    }
+
+    private fun nearOpening(lat: Double, lon: Double, zoom: Double): Boolean {
+        val target = opening.value
+        return abs(target.lat - lat) < 1e-3 && abs(target.lon - lon) < 1e-3 && abs(target.zoom - zoom) < 0.02
     }
 
     private fun markStale(label: String, now: Long) {
@@ -268,4 +300,62 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private val numbers = java.text.NumberFormat.getIntegerInstance(Locale.US)
+}
+
+private fun formatCamera(jump: CameraJump): String {
+    return String.format(Locale.US, "%.5f,%.5f,%.2f", jump.lat, jump.lon, jump.zoom)
+}
+
+private fun parseCamera(raw: String?): CameraJump? {
+    val parts = raw?.split(',') ?: return null
+    if (parts.size != 3) return null
+    val lat = parts[0].toDoubleOrNull() ?: return null
+    val lon = parts[1].toDoubleOrNull() ?: return null
+    val zoom = parts[2].toDoubleOrNull() ?: return null
+    if (lat !in -85.0..85.0 || lon !in -180.0..180.0 || zoom !in 0.5..18.0) return null
+    return CameraJump(lat, lon, zoom)
+}
+
+private fun padView(view: ViewBox): ViewBox {
+    val latSpan = (view.north - view.south).coerceAtLeast(0.01)
+    val crosses = view.west > view.east
+    val lonSpan = if (crosses) 360.0 - view.west + view.east else view.east - view.west
+    val latM = max(0.3, latSpan * 0.15)
+    val lonM = max(0.3, lonSpan.coerceAtLeast(0.01) * 0.15)
+    val south = (view.south - latM).coerceAtLeast(-85.0)
+    val north = (view.north + latM).coerceAtMost(85.0)
+    if (lonSpan + lonM * 2 >= 360.0) return ViewBox(south, north, -180.0, 180.0)
+    return ViewBox(south, north, wrapLon(view.west - lonM), wrapLon(view.east + lonM))
+}
+
+private fun wrapLon(lon: Double): Double {
+    var value = lon
+    while (value > 180.0) value -= 360.0
+    while (value < -180.0) value += 360.0
+    return value
+}
+
+private fun thin(planes: List<VisiblePlane>, view: ViewBox, alwaysHex: String?): List<VisiblePlane> {
+    val latSpan = (view.north - view.south).coerceAtLeast(0.5)
+    val crosses = view.west > view.east
+    val lonSpan = (if (crosses) 360.0 - view.west + view.east else view.east - view.west).coerceAtLeast(0.5)
+    val latCell = latSpan / 12.0
+    val lonCell = lonSpan / 24.0
+    val cells = HashMap<Long, VisiblePlane>(288)
+    var always: VisiblePlane? = null
+    for (plane in planes) {
+        if (plane.hex == alwaysHex) always = plane
+        val row = floor((plane.lat - view.south) / latCell).toLong()
+        val lon0 = if (crosses && plane.lon < view.west) plane.lon + 360.0 else plane.lon
+        val col = floor((lon0 - view.west) / lonCell).toLong()
+        val key = (row shl 32) xor (col and 0xffffffffL)
+        val prev = cells[key]
+        if (prev == null || plane.hex < prev.hex) cells[key] = plane
+    }
+    if (always == null) return cells.values.toList()
+    if (cells.values.any { it.hex == always.hex }) return cells.values.toList()
+    val out = ArrayList<VisiblePlane>(cells.size + 1)
+    out.addAll(cells.values)
+    out.add(always)
+    return out
 }
