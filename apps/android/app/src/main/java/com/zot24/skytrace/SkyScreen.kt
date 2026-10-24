@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.graphics.SolidColor
@@ -190,6 +192,16 @@ fun SkyScreen(vm: SkyViewModel = viewModel()) {
                         .clip(RoundedCornerShape(16.dp))
                         .background(Panel)
                         .border(1.dp, Line, RoundedCornerShape(16.dp))
+                        .pointerInput(detail.hex) {
+                            var pulled = 0f
+                            detectVerticalDragGestures(
+                                onDragStart = { pulled = 0f },
+                                onDragEnd = { if (pulled > 48.dp.toPx()) vm.closeDetail() },
+                            ) { change, dy ->
+                                change.consume()
+                                pulled += dy
+                            }
+                        }
                         .padding(16.dp),
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
