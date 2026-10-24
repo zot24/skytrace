@@ -31,6 +31,10 @@ const IMAGES = {
   'plane-selected': require('../assets/plane-selected.png'),
 };
 
+const planePaint: SymbolLayerSpecification['paint'] = {
+  'icon-opacity': ['get', 'op'],
+};
+
 const planeLayout: SymbolLayerSpecification['layout'] = {
   'icon-image': ['case', ['==', ['get', 'sel'], 1], 'plane-selected', 'plane'],
   'icon-rotate': ['get', 'hdg'],
@@ -145,7 +149,7 @@ const LiveTraffic = memo(function LiveTraffic({
       if (now - lastPush < pushEvery) return;
       lastPush = now;
       // Keep dead-reckoning every frame; push the shape source at 15–30Hz.
-      const built = buildPlaneData(crafts, positions, hex);
+      const built = buildPlaneData(crafts, positions, hex, now);
       pushEvery = built.count > 2500 ? 66 : built.count > 800 ? 50 : 33;
       setPlanes((prev) => (prev === built.json ? prev : built.json));
       if (hex && craft) {
@@ -177,7 +181,7 @@ const LiveTraffic = memo(function LiveTraffic({
       </GeoJSONSource>
       <GeoJSONSource id="planes" data={planes} tolerance={0} onPress={onPlanePress} hitbox={PLANE_HITBOX}>
         {/* v11 GeoJSONSource + symbol layer: the current ShapeSource / SymbolLayer. */}
-        <Layer id="plane-icons" type="symbol" layout={planeLayout} />
+        <Layer id="plane-icons" type="symbol" layout={planeLayout} paint={planePaint} />
       </GeoJSONSource>
     </>
   );

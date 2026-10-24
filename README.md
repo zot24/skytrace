@@ -9,7 +9,7 @@ npm i
 npm run dev
 ```
 
-That starts Vite at http://127.0.0.1:5173 and the API worker with `wrangler dev` on port 8787. Vite proxies `/api` to the worker. This repo does not deploy anything.
+That starts Vite at http://127.0.0.1:5173 and the API worker with `wrangler dev` on port 8787. Vite proxies `/api` to the worker. The same command is headless. It does not read stdin and it does not open a browser. This repo does not deploy anything.
 
 `http://127.0.0.1:5173/?synthetic=10000` draws 10,000 simulated aircraft in the browser for performance checks. No feed is called.
 
@@ -25,12 +25,12 @@ Typechecks, builds, and runs a headless Playwright smoke test (synthetic traffic
 
 The code is MIT. The data is not, and it is not all licensed the same way.
 
-- **adsb.lol** is the primary feed. The API and the data it publishes are ODbL. If you build a derived database from it, that database stays share-alike. There is no world snapshot (`/v2/all` is gone). `/api/planes` walks `https://api.adsb.lol/v2/point/{lat}/{lon}/250` — 250 nautical miles is the maximum radius — a few tiles per refresh, and keeps a short-lived tile cache. Upstream answers 429 if you request faster than that. Ask them before production use; an API key may be required later.
+- **adsb.lol** is the primary feed. The API and the data it publishes are ODbL. If you build a derived database from it, that database stays share-alike. There is no world snapshot (`/v2/all` is gone). `/api/planes` walks `https://api.adsb.lol/v2/point/{lat}/{lon}/250`. 250 nautical miles is the maximum radius. Each refresh fetches a few tiles and keeps a tile until a later refresh replaces it. Upstream answers 429 if you request faster than that. Ask them before production use. An API key may be required later.
 - **OpenSky Network** is the fallback (`/api/states/all`) when adsb.lol returns nothing or responds 429. OpenSky data is non-commercial only, and anonymous calls are rate limited. It has callsign, altitude, speed, and heading, not aircraft type or registration.
 - **OurAirports** supplies the large and medium airports. The dataset is public domain, with no warranty.
 - The basemap is **OpenFreeMap**’s dark style, © **OpenStreetMap** contributors. Those credits, plus the feed credits, stay visible in the map.
 
-`/api/planes` is cached for about 5 seconds with the Cache API. The response `src` field and the `x-skytrace-source` header name the feed in use. The map dead-reckons between fresh updates from ground speed and heading. A stale frame stays on the last fix.
+`/api/planes` is cached for about 5 seconds with the Cache API. The response `src` field and the `x-skytrace-source` header name the feed in use. Each aircraft dead-reckons from its last ground speed and heading for 60 seconds after its last real update, then fades out. A new fix eases into place. A stale frame does not freeze the other aircraft. A headless browser can read `window.__skytrace.drawn`, `window.__skytrace.source`, and `window.__skytrace.stale`.
 
 ## Android
 

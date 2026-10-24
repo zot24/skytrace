@@ -23,7 +23,14 @@ type FeedBody = {
 
 declare global {
   interface Window {
-    __skytrace: { ready: boolean; firstMapLoadMs: number; fps: number };
+    __skytrace: {
+      ready: boolean;
+      firstMapLoadMs: number;
+      fps: number;
+      drawn: number;
+      source: string;
+      stale: boolean;
+    };
     __map: Map;
     __samplePlane: () => { x: number; y: number } | null;
   }
@@ -36,7 +43,17 @@ const FAIL_CAP_MS = 60_000;
 
 const started = performance.now();
 const frameTimes: number[] = [];
-window.__skytrace = { ready: false, firstMapLoadMs: 0, fps: 0 };
+const syntheticCount = readSynthetic();
+let sourceName = syntheticCount ? 'synthetic' : 'connecting';
+let feedStale = false;
+window.__skytrace = {
+  ready: false,
+  firstMapLoadMs: 0,
+  fps: 0,
+  drawn: 0,
+  source: sourceName,
+  stale: false,
+};
 
 const stat = document.querySelector<HTMLElement>('#stat')!;
 const form = document.querySelector<HTMLFormElement>('#search')!;
@@ -50,8 +67,6 @@ const pAlt = document.querySelector<HTMLElement>('#p-alt')!;
 const pGs = document.querySelector<HTMLElement>('#p-gs')!;
 const pHdg = document.querySelector<HTMLElement>('#p-hdg')!;
 
-const syntheticCount = readSynthetic();
-let sourceName = syntheticCount ? 'synthetic' : 'connecting';
 let airports: Airport[] = [];
 let shown: Airport[] = [];
 let cursor = -1;
@@ -252,6 +267,7 @@ function noteFrame() {
   const cut = now - 1000;
   while (frameTimes.length && frameTimes[0] < cut) frameTimes.shift();
   window.__skytrace.fps = frameTimes.length;
+  publishProbe();
 }
 
 function emptyCollection(): GeoJSON.FeatureCollection {
@@ -291,6 +307,12 @@ function markStale() {
   sourceName = base && base !== 'connecting' && base !== 'feed unavailable' ? `${base} · stale` : 'feed unavailable';
 }
 
+function publishProbe() {
+  window.__skytrace.drawn = layer.drawn;
+  window.__skytrace.source = sourceName.replace(/ · stale$/, '');
+  window.__skytrace.stale = feedStale;
+}
+
 async function poll() {
   try {
     const res = await fetch(feedUrl(), { cache: 'no-store' });
@@ -305,6 +327,7 @@ async function poll() {
     if (body?.ac?.length) syncPlanes();
     if (!outcome.fresh) {
       pollAttempt += 1;
+      feedStale = true;
       if (craftList().length) markStale();
       else sourceName = 'feed unavailable';
       const why = !res.ok ? `http ${res.status}` : body?.stale ? 'stale' : 'empty';
@@ -312,11 +335,13 @@ async function poll() {
       paintStat();
       return;
     }
+    feedStale = false;
     pollAttempt = 0;
     armPoll(SUCCESS_MS + Math.round(Math.random() * 800), null);
   } catch {
     applyFeedBody(null, false, performance.now());
     pollAttempt += 1;
+    feedStale = true;
     if (craftList().length) markStale();
     else sourceName = 'feed unavailable';
     armPoll(failureDelay(pollAttempt), `attempt ${pollAttempt}, network`);
@@ -339,6 +364,7 @@ function feedUrl(): string {
 }
 
 function paintStat() {
+  publishProbe();
   const count = craftList().length.toLocaleString('en-US');
   const fps = window.__skytrace.fps;
   stat.textContent = `${count} aircraft · ${sourceName}${fps ? ` · ${fps} fps` : ''}`;

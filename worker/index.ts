@@ -38,6 +38,8 @@ const TILES: Array<[number, number]> = [
 ];
 
 const TILE_TTL_MS = 120_000;
+const TILE_CAP = 96;
+const REFRESH_CAP = 4;
 const BATCH = 3;
 const BACKOFF_BASE_MS = 2_000;
 const BACKOFF_CAP_MS = 60_000;
@@ -80,7 +82,7 @@ export default {
     if (simulate) return replyLimited(bbox, null, true, 'simulated 429');
 
     try {
-      const outcome = await refresh(bbox ? cover(bbox) : nextBatch());
+      const outcome = await refresh(tilesToRefresh(bbox));
       if (outcome.rateLimited) return replyLimited(bbox, cacheKey, true, 'upstream 429');
       const ac = collect();
       if (ac.length === 0) throw new UpstreamError(502, 'adsb.lol returned no aircraft');
@@ -208,6 +210,29 @@ async function readCache(key: Request): Promise<Response | null> {
   return null;
 }
 
+function tilesToRefresh(bbox: Bbox | null): Array<[number, number]> {
+  const focus = bbox ? cover(bbox) : nextBatch();
+  const out: Array<[number, number]> = [];
+  const seen = new Set<string>();
+  const push = (lat: number, lon: number) => {
+    const id = `${round1(lat)},${round1(lon)}`;
+    if (seen.has(id)) return;
+    seen.add(id);
+    out.push([round1(lat), round1(lon)]);
+  };
+  for (const [lat, lon] of focus) push(lat, lon);
+  if (out.length >= REFRESH_CAP) return out;
+  const aged = [...tiles.entries()]
+    .filter(([, hit]) => Date.now() - hit.at >= TILE_TTL_MS)
+    .sort((a, b) => a[1].at - b[1].at);
+  for (const [id] of aged) {
+    if (out.length >= REFRESH_CAP) break;
+    const [lat, lon] = id.split(',');
+    push(Number(lat), Number(lon));
+  }
+  return out;
+}
+
 function nextBatch(): Array<[number, number]> {
   const batch: Array<[number, number]> = [];
   for (let i = 0; i < BATCH; i++) batch.push(TILES[(cursor + i) % TILES.length]);
@@ -234,17 +259,24 @@ async function refresh(list: Array<[number, number]>): Promise<{ rateLimited: bo
   }
   const workers = Math.min(2, list.length);
   await Promise.all(Array.from({ length: workers }, () => worker()));
+  trimTiles();
   return { rateLimited };
 }
 
+function trimTiles() {
+  if (tiles.size <= TILE_CAP) return;
+  const ranked = [...tiles.entries()].sort((a, b) => a[1].at - b[1].at);
+  for (const [id] of ranked) {
+    if (tiles.size <= TILE_CAP) break;
+    tiles.delete(id);
+  }
+}
+
 function collect(): Ac[] {
-  const now = Date.now();
+  // A healthy poll refreshes a few tiles. Deleting the rest at 120s made those
+  // areas disappear, and an empty collect was reported as an upstream failure.
   const byHex = new Map<string, Ac>();
-  for (const [id, hit] of tiles) {
-    if (now - hit.at > TILE_TTL_MS) {
-      tiles.delete(id);
-      continue;
-    }
+  for (const hit of tiles.values()) {
     for (const ac of hit.ac) byHex.set(ac[0], ac);
   }
   return [...byHex.values()];

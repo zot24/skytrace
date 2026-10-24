@@ -1,4 +1,4 @@
-import type { Craft } from './traffic';
+import { opacityAt, type Craft } from './traffic';
 import { viewBox } from './view';
 
 const EMPTY = '{"type":"FeatureCollection","features":[]}';
@@ -7,6 +7,7 @@ export function buildPlaneData(
   crafts: readonly Craft[],
   positions: Float64Array,
   selected: string | null,
+  now: number,
 ): { json: string; count: number } {
   const pad = (80 * 360) / (512 * 2 ** Math.max(0, viewBox.zoom));
   const south = viewBox.south - pad;
@@ -20,14 +21,15 @@ export function buildPlaneData(
     const craft = crafts[i]!;
     const lon = positions[i * 2]!;
     const lat = positions[i * 2 + 1]!;
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+    const op = opacityAt(craft, now);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || op <= 0) continue;
     const sel = craft.hex === selected;
     if (!sel && !inView(lat, lon, south, north, west, east, wraps)) continue;
     if (count) parts.push(',');
     const id = JSON.stringify(craft.hex);
     const hdg = Math.round(((craft.track % 360) + 360) % 360);
     parts.push(
-      `{"type":"Feature","id":${id},"properties":{"hex":${id},"hdg":${hdg},"sel":${sel ? 1 : 0}},"geometry":{"type":"Point","coordinates":[${lon.toFixed(5)},${lat.toFixed(5)}]}}`,
+      `{"type":"Feature","id":${id},"properties":{"hex":${id},"hdg":${hdg},"sel":${sel ? 1 : 0},"op":${op}},"geometry":{"type":"Point","coordinates":[${lon.toFixed(5)},${lat.toFixed(5)}]}}`,
     );
     count++;
   }

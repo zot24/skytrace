@@ -1,5 +1,5 @@
 import type { CustomLayerInterface, CustomRenderMethodInput, Map as MapLibreMap } from 'maplibre-gl';
-import { positionAt, type Craft } from './traffic';
+import { opacityAt, positionAt, type Craft } from './traffic';
 
 const MESH = new Float32Array([
   0, -13, -3.5, -2, 3.5, -2,
@@ -16,11 +16,13 @@ const VERT = `#version 300 es
 uniform mat4 u_matrix;
 uniform float u_mpp;
 uniform float u_scale;
-in vec2 a_local;
-in vec2 a_merc;
-in float a_heading;
-in float a_sel;
+layout(location = 0) in vec2 a_local;
+layout(location = 1) in vec2 a_merc;
+layout(location = 2) in float a_heading;
+layout(location = 3) in float a_sel;
+layout(location = 4) in float a_opacity;
 out float v_sel;
+out float v_opacity;
 void main() {
   float c = cos(a_heading);
   float s = sin(a_heading);
@@ -28,17 +30,20 @@ void main() {
   vec2 r = vec2(p.x * c - p.y * s, p.x * s + p.y * c);
   gl_Position = u_matrix * vec4(a_merc + r * u_mpp, 0.0, 1.0);
   v_sel = a_sel;
+  v_opacity = a_opacity;
 }`;
 
 const FRAG = `#version 300 es
 precision highp float;
 in float v_sel;
+in float v_opacity;
 uniform vec4 u_color;
 uniform float u_tint;
 out vec4 fragColor;
 void main() {
   vec3 base = mix(vec3(0.93, 0.96, 1.0), vec3(1.0, 0.67, 0.22), v_sel);
-  fragColor = vec4(mix(u_color.rgb, base, u_tint), 1.0);
+  vec3 rgb = mix(u_color.rgb, base, u_tint);
+  fragColor = vec4(rgb * v_opacity, v_opacity);
 }`;
 
 const DEG = Math.PI / 180;
@@ -49,6 +54,7 @@ export class PlaneLayer implements CustomLayerInterface {
   renderingMode = '2d' as const;
   crafts: Craft[] = [];
   selected: string | null = null;
+  drawn = 0;
   onFrame: () => void = () => {};
 
   private map!: MapLibreMap;
@@ -92,6 +98,7 @@ export class PlaneLayer implements CustomLayerInterface {
 
   render(gl: WebGL2RenderingContext, options: CustomRenderMethodInput) {
     const count = this.program && this.mesh && this.instances ? this.upload(gl) : 0;
+    this.drawn = count;
     if (this.program && this.mesh && this.instances && count > 0) {
       // mainMatrix takes 0–1 mercator into clip space. modelViewProjectionMatrix does not.
       const src = (options.defaultProjectionData?.mainMatrix ?? options.modelViewProjectionMatrix) as ArrayLike<number>;
@@ -119,14 +126,17 @@ export class PlaneLayer implements CustomLayerInterface {
       gl.vertexAttribDivisor(0, 0);
       gl.bindBuffer(gl.ARRAY_BUFFER, this.instances);
       gl.enableVertexAttribArray(1);
-      gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 16, 0);
+      gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 20, 0);
       gl.vertexAttribDivisor(1, 1);
       gl.enableVertexAttribArray(2);
-      gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 16, 8);
+      gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 20, 8);
       gl.vertexAttribDivisor(2, 1);
       gl.enableVertexAttribArray(3);
-      gl.vertexAttribPointer(3, 1, gl.FLOAT, false, 16, 12);
+      gl.vertexAttribPointer(3, 1, gl.FLOAT, false, 20, 12);
       gl.vertexAttribDivisor(3, 1);
+      gl.enableVertexAttribArray(4);
+      gl.vertexAttribPointer(4, 1, gl.FLOAT, false, 20, 16);
+      gl.vertexAttribDivisor(4, 1);
       gl.disable(gl.DEPTH_TEST);
       gl.depthMask(false);
       gl.disable(gl.CULL_FACE);
@@ -146,9 +156,11 @@ export class PlaneLayer implements CustomLayerInterface {
       gl.vertexAttribDivisor(1, 0);
       gl.vertexAttribDivisor(2, 0);
       gl.vertexAttribDivisor(3, 0);
+      gl.vertexAttribDivisor(4, 0);
       gl.disableVertexAttribArray(1);
       gl.disableVertexAttribArray(2);
       gl.disableVertexAttribArray(3);
+      gl.disableVertexAttribArray(4);
       gl.depthMask(depthMask);
       if (depthTest) gl.enable(gl.DEPTH_TEST);
       if (cull) gl.enable(gl.CULL_FACE);
@@ -164,9 +176,9 @@ export class PlaneLayer implements CustomLayerInterface {
   private ensure(gl: WebGL2RenderingContext, count: number) {
     if (count <= this.capacity) return;
     this.capacity = Math.max(count, Math.ceil(this.capacity * 1.5));
-    this.data = new Float32Array(this.capacity * 4);
+    this.data = new Float32Array(this.capacity * 5);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.instances);
-    gl.bufferData(gl.ARRAY_BUFFER, this.capacity * 16, gl.DYNAMIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, this.capacity * 20, gl.DYNAMIC_DRAW);
   }
 
   private upload(gl: WebGL2RenderingContext): number {
@@ -188,17 +200,20 @@ export class PlaneLayer implements CustomLayerInterface {
     let count = 0;
     for (let i = 0; i < total; i++) {
       const craft = crafts[i]!;
+      const opacity = opacityAt(craft, now);
+      if (opacity <= 0) continue;
       const p = positionAt(craft, now);
       if (craft.hex !== selected && !inView(p.lat, p.lon, south, north, west, east, wraps)) continue;
       data[j++] = (p.lon + 180) / 360;
       data[j++] = mercY(p.lat);
       data[j++] = craft.track * DEG;
       data[j++] = craft.hex === selected ? 1 : 0;
+      data[j++] = opacity;
       count++;
     }
     if (count > 0) {
       gl.bindBuffer(gl.ARRAY_BUFFER, this.instances);
-      gl.bufferSubData(gl.ARRAY_BUFFER, 0, data.subarray(0, count * 4));
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, data.subarray(0, count * 5));
     }
     return count;
   }
