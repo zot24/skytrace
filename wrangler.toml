@@ -1,0 +1,7 @@
+name = "skytrace"
+main = "worker/index.ts"
+compatibility_date = "2026-10-01"
+
+[dev]
+port = 8787
+ip = "127.0.0.1"
