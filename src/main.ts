@@ -7,7 +7,7 @@ import {
   craftList,
   notePosition,
   positionAt,
-  replaceAll,
+  applyFeedBody,
   synthetic,
   trackOf,
   type Craft,
@@ -291,13 +291,6 @@ function markStale() {
   sourceName = base && base !== 'connecting' && base !== 'feed unavailable' ? `${base} · stale` : 'feed unavailable';
 }
 
-function keepFrame(body: FeedBody) {
-  if (!body.ac?.length) return;
-  replaceAll(body.ac, performance.now());
-  syncPlanes();
-  if (body.src && body.src !== 'none') sourceName = body.src;
-}
-
 async function poll() {
   try {
     const res = await fetch(feedUrl(), { cache: 'no-store' });
@@ -307,9 +300,10 @@ async function poll() {
     } catch {
       body = null;
     }
-    const fresh = !!body && res.ok && !body.stale && body.src !== 'none' && (body.ac?.length ?? 0) > 0;
-    if (!fresh || !body?.ac) {
-      if (body) keepFrame(body);
+    const outcome = applyFeedBody(body, res.ok, performance.now());
+    if (outcome.src) sourceName = outcome.src;
+    if (body?.ac?.length) syncPlanes();
+    if (!outcome.fresh) {
       pollAttempt += 1;
       if (craftList().length) markStale();
       else sourceName = 'feed unavailable';
@@ -318,12 +312,10 @@ async function poll() {
       paintStat();
       return;
     }
-    replaceAll(body.ac, performance.now());
-    syncPlanes();
-    sourceName = body.src || 'adsb.lol';
     pollAttempt = 0;
     armPoll(SUCCESS_MS + Math.round(Math.random() * 800), null);
   } catch {
+    applyFeedBody(null, false, performance.now());
     pollAttempt += 1;
     if (craftList().length) markStale();
     else sourceName = 'feed unavailable';

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { API_BASE } from './config';
-import { craftList, replaceAll, type FeedRow } from './traffic';
+import { applyFeedBody, craftList, type FeedRow } from './traffic';
 import { viewBox } from './view';
 
 type FeedBody = {
@@ -53,12 +53,6 @@ export function useFeed(): FeedStat {
       sourceName = base && base !== 'connecting' && base !== 'feed unavailable' ? `${base} · stale` : 'feed unavailable';
     };
 
-    const keepFrame = (body: FeedBody) => {
-      if (!body.ac?.length) return;
-      replaceAll(body.ac, performance.now());
-      if (body.src && body.src !== 'none') sourceName = body.src;
-    };
-
     async function poll() {
       try {
         const res = await fetch(feedUrl(), { cache: 'no-store' });
@@ -68,9 +62,9 @@ export function useFeed(): FeedStat {
         } catch {
           body = null;
         }
-        const fresh = !!body && res.ok && !body.stale && body.src !== 'none' && (body.ac?.length ?? 0) > 0;
-        if (!fresh || !body?.ac) {
-          if (body) keepFrame(body);
+        const outcome = applyFeedBody(body, res.ok, performance.now());
+        if (outcome.src) sourceName = outcome.src;
+        if (!outcome.fresh) {
           attempt += 1;
           if (craftList().length) markStale();
           else sourceName = 'feed unavailable';
@@ -79,11 +73,10 @@ export function useFeed(): FeedStat {
           publish();
           return;
         }
-        replaceAll(body.ac, performance.now());
-        sourceName = body.src || 'adsb.lol';
         attempt = 0;
         arm(SUCCESS_MS + Math.round(Math.random() * 800), null);
       } catch {
+        applyFeedBody(null, false, performance.now());
         attempt += 1;
         if (craftList().length) markStale();
         else sourceName = 'feed unavailable';

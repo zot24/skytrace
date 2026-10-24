@@ -120,3 +120,21 @@ export function replaceAll(rows: FeedRow[], now: number) {
   }
   list = Array.from(byHex.values());
 }
+
+export function applyFeedBody(
+  body: { src?: string; ac?: FeedRow[]; stale?: boolean } | null,
+  ok: boolean,
+  now: number,
+): { fresh: boolean; src: string } {
+  const fresh = !!body && ok && !body.stale && body.src !== 'none' && (body.ac?.length ?? 0) > 0;
+  if (fresh && body?.ac) {
+    replaceAll(body.ac, now);
+    return { fresh: true, src: body.src || 'adsb.lol' };
+  }
+  if (body?.ac?.length) {
+    replaceAll(body.ac, now);
+    const src = body.src && body.src !== 'none' ? body.src : '';
+    return { fresh: false, src };
+  }
+  return { fresh: false, src: '' };
+}
