@@ -13,7 +13,7 @@ import org.maplibre.android.style.sources.TileSet
  */
 enum class MapStyle(val label: String, val credit: String) {
     DARK("Dark", "© OpenFreeMap · © OpenStreetMap contributors"),
-    SATELLITE("Satellite", "Imagery: NASA GIBS Blue Marble · USGS The National Map (public domain)"),
+    SATELLITE("Satellite", EOX_ATTRIBUTION),
     TERRAIN(
         "Terrain",
         "© OpenFreeMap · © OpenStreetMap contributors · Elevation: Mapzen Terrain Tiles on AWS Open Data (SRTM, GMTED2010, ETOPO1, NED and others)",
@@ -41,12 +41,16 @@ fun addTerrain(style: Style) {
     if (below != null) style.addLayerBelow(shade, below) else style.addLayer(shade)
 }
 
+/** Required attribution for the 2025 layer, verbatim from cloudless.eox.at/license-non-commercial. Licence: CC BY-NC-SA 4.0. */
+const val EOX_ATTRIBUTION = "EOxCloudless https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2025)"
+
+// EOxCloudless (Sentinel-2 cloudless) 2025, WMTS layer s2cloudless-2025_3857, matrix set GoogleMapsCompatible.
+// Native pyramid is z0–14 in EPSG:3857 (cloudless.eox.at product list), so maxzoom 14: MapLibre over-zooms past it.
+// CC BY-NC-SA 4.0: non-commercial use only.
 private const val SATELLITE_JSON = """{"version":8,
 "glyphs":"https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf",
 "sources":{
-"gibs":{"type":"raster","tileSize":256,"maxzoom":8,"tiles":["https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/BlueMarble_ShadedRelief_Bathymetry/default/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpeg"]},
-"usgs":{"type":"raster","tileSize":256,"minzoom":7,"maxzoom":16,"bounds":[-125,24,-66,50],"tiles":["https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}"]}},
+"eox":{"type":"raster","tileSize":256,"minzoom":0,"maxzoom":14,"tiles":["https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2025_3857/default/GoogleMapsCompatible/{z}/{y}/{x}.jpg"]}},
 "layers":[
 {"id":"bg","type":"background","paint":{"background-color":"#05070a"}},
-{"id":"gibs","type":"raster","source":"gibs"},
-{"id":"usgs","type":"raster","source":"usgs","minzoom":7}]}"""
+{"id":"eox","type":"raster","source":"eox"}]}"""

@@ -33,5 +33,7 @@ The code is MIT. The data is not, and it is not all licensed the same way.
 - **OpenSky Network** is the fallback (`/api/states/all`) when adsb.lol returns nothing. OpenSky data is non-commercial only, and anonymous calls are rate limited. It has callsign, altitude, speed, and heading, not aircraft type or registration.
 - **OurAirports** supplies the large and medium airports. The dataset is public domain, with no warranty.
 - The basemap is **OpenFreeMap**’s dark style, © **OpenStreetMap** contributors. Those credits, plus the feed credits, stay visible in the map.
+- **Satellite imagery (Android)** is EOxCloudless 2025 (Sentinel-2 cloudless) from EOX, licensed **CC BY-NC-SA 4.0: non-commercial use only**. The app shows EOX's required attribution while satellite is on. A paid or freemium tier would need a different imagery source or a commercial EOX licence.
+- **Routes (Android)** come from VRS standing data (CC0), bundled as a snapshot and refreshed from GitHub.
 
 `/api/planes` is cached for about 5 seconds with the Cache API. The browser dead-reckons between those updates from ground speed and heading.

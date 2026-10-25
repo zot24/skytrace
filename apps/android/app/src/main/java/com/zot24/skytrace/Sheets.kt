@@ -289,8 +289,10 @@ fun Credits(style: MapStyle, onAbout: () -> Unit) {
             Text(
                 style.credit.substringBefore(" · ") + " · adsb.lol",
                 color = Color(0xC7E8EEF6),
-                fontSize = 11.sp,
-                maxLines = 1,
+                fontSize = if (style == MapStyle.SATELLITE) 10.sp else 11.sp,
+                lineHeight = 13.sp,
+                // EOX requires its full attribution to be visible whenever the imagery is shown.
+                maxLines = if (style == MapStyle.SATELLITE) 3 else 1,
                 modifier = Modifier.weight(1f),
             )
             Text(
