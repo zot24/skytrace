@@ -1,0 +1,225 @@
+package com.zot24.skytrace
+
+import java.util.Locale
+
+enum class Silhouette {
+    WIDE_BODY,
+    NARROW_BODY,
+    REGIONAL_JET,
+    BIZJET,
+    TURBOPROP,
+    LIGHT_PISTON,
+    HELI_LIGHT,
+    HELI_MEDIUM,
+    HELI_HEAVY,
+}
+
+fun iconScale(kind: Silhouette): Double = when (kind) {
+    Silhouette.WIDE_BODY -> 1.15
+    Silhouette.BIZJET, Silhouette.LIGHT_PISTON -> 0.85
+    Silhouette.NARROW_BODY,
+    Silhouette.REGIONAL_JET,
+    Silhouette.TURBOPROP,
+    Silhouette.HELI_LIGHT,
+    Silhouette.HELI_MEDIUM,
+    Silhouette.HELI_HEAVY -> 1.0
+}
+
+fun silhouetteFor(typeCode: String?, emitterCategory: String?): Silhouette {
+    val code = typeCode
+        .orEmpty()
+        .trim()
+        .uppercase(Locale.US)
+        .replace("-", "")
+        .replace(" ", "")
+    if (code.isNotEmpty() && code != "0000" && code != "?") {
+        exact[code]?.let { return it }
+        for ((prefix, silhouette) in prefixes) {
+            if (code.startsWith(prefix)) return silhouette
+        }
+    }
+    return categoryFallback(emitterCategory)
+}
+
+fun categoryFallback(emitterCategory: String?): Silhouette {
+    return when (emitterCategory?.trim()?.uppercase(Locale.US)) {
+        "A5", "A4" -> Silhouette.WIDE_BODY
+        "A3" -> Silhouette.NARROW_BODY
+        "A2" -> Silhouette.REGIONAL_JET
+        "A6" -> Silhouette.BIZJET
+        "A1", "B1", "B4", "B6" -> Silhouette.LIGHT_PISTON
+        "A7" -> Silhouette.HELI_MEDIUM
+        else -> Silhouette.NARROW_BODY
+    }
+}
+
+private val exact: Map<String, Silhouette> = mapOf(
+    "A310" to Silhouette.WIDE_BODY,
+    "A300" to Silhouette.WIDE_BODY,
+    "A306" to Silhouette.WIDE_BODY,
+    "A3ST" to Silhouette.WIDE_BODY,
+    "MD11" to Silhouette.WIDE_BODY,
+    "DC10" to Silhouette.WIDE_BODY,
+    "C17" to Silhouette.WIDE_BODY,
+    "BE40" to Silhouette.BIZJET,
+    "B350" to Silhouette.TURBOPROP,
+)
+
+private val prefixes: List<Pair<String, Silhouette>> = listOf(
+    "A38" to Silhouette.WIDE_BODY,
+    "A35" to Silhouette.WIDE_BODY,
+    "A34" to Silhouette.WIDE_BODY,
+    "A33" to Silhouette.WIDE_BODY,
+    "A30" to Silhouette.WIDE_BODY,
+    "B74" to Silhouette.WIDE_BODY,
+    "B77" to Silhouette.WIDE_BODY,
+    "B78" to Silhouette.WIDE_BODY,
+    "B76" to Silhouette.WIDE_BODY,
+    "IL96" to Silhouette.WIDE_BODY,
+    "A124" to Silhouette.WIDE_BODY,
+    "A225" to Silhouette.WIDE_BODY,
+    "A32" to Silhouette.NARROW_BODY,
+    "A31" to Silhouette.NARROW_BODY,
+    "A20" to Silhouette.NARROW_BODY,
+    "A21" to Silhouette.NARROW_BODY,
+    "B73" to Silhouette.NARROW_BODY,
+    "B75" to Silhouette.NARROW_BODY,
+    "B37" to Silhouette.NARROW_BODY,
+    "B38" to Silhouette.NARROW_BODY,
+    "B39" to Silhouette.NARROW_BODY,
+    "B3X" to Silhouette.NARROW_BODY,
+    "MD8" to Silhouette.NARROW_BODY,
+    "MD9" to Silhouette.NARROW_BODY,
+    "T204" to Silhouette.NARROW_BODY,
+    "B712" to Silhouette.NARROW_BODY,
+    "E170" to Silhouette.REGIONAL_JET,
+    "E75" to Silhouette.REGIONAL_JET,
+    "E190" to Silhouette.REGIONAL_JET,
+    "E195" to Silhouette.REGIONAL_JET,
+    "E290" to Silhouette.REGIONAL_JET,
+    "E295" to Silhouette.REGIONAL_JET,
+    "E17" to Silhouette.REGIONAL_JET,
+    "E19" to Silhouette.REGIONAL_JET,
+    "E29" to Silhouette.REGIONAL_JET,
+    "CRJ" to Silhouette.REGIONAL_JET,
+    "RJ1" to Silhouette.REGIONAL_JET,
+    "RJ7" to Silhouette.REGIONAL_JET,
+    "RJ8" to Silhouette.REGIONAL_JET,
+    "F100" to Silhouette.REGIONAL_JET,
+    "F70" to Silhouette.REGIONAL_JET,
+    "F28" to Silhouette.REGIONAL_JET,
+    "SU9" to Silhouette.REGIONAL_JET,
+    "BCS" to Silhouette.REGIONAL_JET,
+    "B46" to Silhouette.REGIONAL_JET,
+    "C510" to Silhouette.BIZJET,
+    "C525" to Silhouette.BIZJET,
+    "C550" to Silhouette.BIZJET,
+    "C560" to Silhouette.BIZJET,
+    "C680" to Silhouette.BIZJET,
+    "C750" to Silhouette.BIZJET,
+    "C56" to Silhouette.BIZJET,
+    "C68" to Silhouette.BIZJET,
+    "C25" to Silhouette.BIZJET,
+    "GLF" to Silhouette.BIZJET,
+    "GLEX" to Silhouette.BIZJET,
+    "GL5T" to Silhouette.BIZJET,
+    "GL7T" to Silhouette.BIZJET,
+    "G280" to Silhouette.BIZJET,
+    "CL30" to Silhouette.BIZJET,
+    "CL35" to Silhouette.BIZJET,
+    "CL60" to Silhouette.BIZJET,
+    "FA7X" to Silhouette.BIZJET,
+    "FA8X" to Silhouette.BIZJET,
+    "FA50" to Silhouette.BIZJET,
+    "F2TH" to Silhouette.BIZJET,
+    "F900" to Silhouette.BIZJET,
+    "E50P" to Silhouette.BIZJET,
+    "E55P" to Silhouette.BIZJET,
+    "E545" to Silhouette.BIZJET,
+    "E550" to Silhouette.BIZJET,
+    "GALX" to Silhouette.BIZJET,
+    "PRM1" to Silhouette.BIZJET,
+    "HDJT" to Silhouette.BIZJET,
+    "H25" to Silhouette.BIZJET,
+    "LJ" to Silhouette.BIZJET,
+    "EA50" to Silhouette.BIZJET,
+    "AT43" to Silhouette.TURBOPROP,
+    "AT45" to Silhouette.TURBOPROP,
+    "AT72" to Silhouette.TURBOPROP,
+    "AT75" to Silhouette.TURBOPROP,
+    "AT76" to Silhouette.TURBOPROP,
+    "AT4" to Silhouette.TURBOPROP,
+    "AT7" to Silhouette.TURBOPROP,
+    "DH8" to Silhouette.TURBOPROP,
+    "SF34" to Silhouette.TURBOPROP,
+    "B190" to Silhouette.TURBOPROP,
+    "BE20" to Silhouette.TURBOPROP,
+    "C208" to Silhouette.TURBOPROP,
+    "C130" to Silhouette.TURBOPROP,
+    "C30J" to Silhouette.TURBOPROP,
+    "SW4" to Silhouette.TURBOPROP,
+    "PC12" to Silhouette.TURBOPROP,
+    "TBM" to Silhouette.TURBOPROP,
+    "DHC6" to Silhouette.TURBOPROP,
+    "AN24" to Silhouette.TURBOPROP,
+    "AN26" to Silhouette.TURBOPROP,
+    "AN12" to Silhouette.TURBOPROP,
+    "A400" to Silhouette.TURBOPROP,
+    "C212" to Silhouette.TURBOPROP,
+    "C152" to Silhouette.LIGHT_PISTON,
+    "C172" to Silhouette.LIGHT_PISTON,
+    "C182" to Silhouette.LIGHT_PISTON,
+    "C206" to Silhouette.LIGHT_PISTON,
+    "C210" to Silhouette.LIGHT_PISTON,
+    "C150" to Silhouette.LIGHT_PISTON,
+    "C177" to Silhouette.LIGHT_PISTON,
+    "P28" to Silhouette.LIGHT_PISTON,
+    "PA18" to Silhouette.LIGHT_PISTON,
+    "PA24" to Silhouette.LIGHT_PISTON,
+    "PA32" to Silhouette.LIGHT_PISTON,
+    "PA34" to Silhouette.LIGHT_PISTON,
+    "PA38" to Silhouette.LIGHT_PISTON,
+    "DA40" to Silhouette.LIGHT_PISTON,
+    "DA42" to Silhouette.LIGHT_PISTON,
+    "DA20" to Silhouette.LIGHT_PISTON,
+    "SR20" to Silhouette.LIGHT_PISTON,
+    "SR22" to Silhouette.LIGHT_PISTON,
+    "BE36" to Silhouette.LIGHT_PISTON,
+    "BE33" to Silhouette.LIGHT_PISTON,
+    "M20P" to Silhouette.LIGHT_PISTON,
+    "R22" to Silhouette.HELI_LIGHT,
+    "R44" to Silhouette.HELI_LIGHT,
+    "R66" to Silhouette.HELI_LIGHT,
+    "B06" to Silhouette.HELI_LIGHT,
+    "B47" to Silhouette.HELI_LIGHT,
+    "EC20" to Silhouette.HELI_LIGHT,
+    "H269" to Silhouette.HELI_LIGHT,
+    "A139" to Silhouette.HELI_MEDIUM,
+    "A169" to Silhouette.HELI_MEDIUM,
+    "A109" to Silhouette.HELI_MEDIUM,
+    "A119" to Silhouette.HELI_MEDIUM,
+    "EC35" to Silhouette.HELI_MEDIUM,
+    "EC45" to Silhouette.HELI_MEDIUM,
+    "EC55" to Silhouette.HELI_MEDIUM,
+    "H60" to Silhouette.HELI_MEDIUM,
+    "S76" to Silhouette.HELI_MEDIUM,
+    "B412" to Silhouette.HELI_MEDIUM,
+    "B429" to Silhouette.HELI_MEDIUM,
+    "B407" to Silhouette.HELI_MEDIUM,
+    "AS50" to Silhouette.HELI_MEDIUM,
+    "AS55" to Silhouette.HELI_MEDIUM,
+    "UH1" to Silhouette.HELI_MEDIUM,
+    "H47" to Silhouette.HELI_HEAVY,
+    "H53" to Silhouette.HELI_HEAVY,
+    "H64" to Silhouette.HELI_HEAVY,
+    "CH47" to Silhouette.HELI_HEAVY,
+    "MI8" to Silhouette.HELI_HEAVY,
+    "MI24" to Silhouette.HELI_HEAVY,
+    "MI26" to Silhouette.HELI_HEAVY,
+    "MI17" to Silhouette.HELI_HEAVY,
+    "S92" to Silhouette.HELI_HEAVY,
+    "EH10" to Silhouette.HELI_HEAVY,
+    "NH90" to Silhouette.HELI_HEAVY,
+    "EC25" to Silhouette.HELI_HEAVY,
+    "H225" to Silhouette.HELI_HEAVY,
+).sortedByDescending { it.first.length }

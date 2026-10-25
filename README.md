@@ -21,6 +21,10 @@ Typechecks, builds, and runs a headless Playwright smoke test (synthetic traffic
 
 `npm run airports` rebuilds `public/airports.json` from the OurAirports CSV.
 
+## Android
+
+`apps/android` is the native map. Build and icon credits are in `apps/android/README.md`.
+
 ## Data and licences
 
 The code is MIT. The data is not, and it is not all licensed the same way.
