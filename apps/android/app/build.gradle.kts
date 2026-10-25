@@ -45,6 +45,8 @@ android {
 
 val copyAirports = tasks.register<Copy>("copyAirports") {
     from(rootProject.layout.projectDirectory.file("../../public/airports.json"))
+    // VRS standing data routes table (CC0), rebuilt by tools/update-vrs-routes.sh.
+    from(rootProject.layout.projectDirectory.file("data/vrs-routes.txt.gz"))
     into(layout.projectDirectory.dir("src/main/assets"))
 }
 

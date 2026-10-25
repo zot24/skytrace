@@ -54,7 +54,14 @@ object SyntheticTraffic {
         return List(24) { i ->
             val r = Random(10_000 + i)
             val phase = i % 3
-            val track = r.nextDouble() * 360
+            // Airborne JFK traffic uses real airline callsigns found in the bundled VRS routes, pointed the right way,
+            // so the flight sheet can show a scheduled route. Ground traffic keeps JFKnn, which has no route.
+            val far = SYNTH_ROUTES.getOrNull(i / 3)
+            val farEnd = far?.let { if (phase == 1) it.second else it.third }
+            val track = when {
+                phase == 0 || farEnd == null -> r.nextDouble() * 360
+                else -> bearingDeg(JFK_LAT, JFK_LON, farEnd.first, farEnd.second)
+            }
             val rad = Math.toRadians(track)
             val (startNm, gs, alt, heading) = when (phase) {
                 0 -> listOf(0.3 + r.nextDouble() * 1.2, 12.0, 0.0, track)
@@ -64,10 +71,32 @@ object SyntheticTraffic {
             val lat = JFK_LAT + startNm * kotlin.math.cos(rad) / 60.0
             val lon = JFK_LON + startNm * kotlin.math.sin(rad) / (60.0 * cos(Math.toRadians(JFK_LAT)))
             PlaneRow(
-                hex = "f6%04x".format(i), callsign = "JFK%02d".format(i), lat = lat, lon = lon,
+                hex = "f6%04x".format(i),
+                callsign = if (phase == 0 || far == null) "JFK%02d".format(i) else if (phase == 1) far.first.substringBefore('/') else far.first.substringAfter('/'), lat = lat, lon = lon,
                 altFt = alt, gsKt = gs, trackDeg = heading,
                 typeCode = types[i % 8], reg = "N%02dJF".format(i), category = "",
             )
         }
     }
+}
+
+/** Departure callsign / arrival callsign, destination, origin. All pairs exist in VRS routes; SKY123 does not (adsb.lol mock fixture). */
+private val SYNTH_ROUTES = listOf(
+    Triple("AAL100/AAL101", 51.4706 to -0.4619, 51.4706 to -0.4619),
+    Triple("AAL117/AAL10", 33.9425 to -118.408, 33.9425 to -118.408),
+    Triple("AAL1174/AAL1357", 25.7959 to -80.287, 25.7959 to -80.287),
+    Triple("JBU1/SKY123", 26.0726 to -80.1527, 42.3656 to -71.0096),
+    Triple("AAL1229/AAL1221", 35.214 to -80.9431, 35.214 to -80.9431),
+    Triple("AAL1473/AAL1175", 36.084 to -115.1537, 36.084 to -115.1537),
+    Triple("AAL1186/AAL1040", 33.4342 to -112.0116, 32.8968 to -97.038),
+    Triple("AAL1444/AAL1315", 35.214 to -80.9431, 41.9786 to -87.9048),
+)
+
+fun bearingDeg(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+    val p1 = Math.toRadians(lat1)
+    val p2 = Math.toRadians(lat2)
+    val dl = Math.toRadians(lon2 - lon1)
+    val y = kotlin.math.sin(dl) * kotlin.math.cos(p2)
+    val x = kotlin.math.cos(p1) * kotlin.math.sin(p2) - kotlin.math.sin(p1) * kotlin.math.cos(p2) * kotlin.math.cos(dl)
+    return (Math.toDegrees(kotlin.math.atan2(y, x)) + 360.0) % 360.0
 }

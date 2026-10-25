@@ -224,7 +224,7 @@ fun SkyScreen(vm: SkyViewModel = viewModel()) {
                 detail != null -> FlightSheet(vm, detail, favAircraft.contains(detail.hex))
             }
             Spacer(Modifier.height(8.dp))
-            Credits(mapStyle) { about = true }
+            Credits(mapStyle, vm.extraRoutes, { vm.setExtraRoutes(it) }) { about = true }
         }
 
         if (about) {

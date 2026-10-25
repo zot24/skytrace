@@ -97,14 +97,15 @@ fun FlightSheet(vm: SkyViewModel, detail: PlaneDetail, favourite: Boolean) {
     SwipeSheet(detail.hex, onDismiss = { vm.closeDetail() }) {
         SheetTitle(detail.title, favourite, { vm.toggleAircraft(detail.hex) }, { vm.closeDetail() })
         Spacer(Modifier.height(6.dp))
-        // No licence-checked route source is wired in, so the route, progress and ETA stay unknown rather than guessed.
-        val route = RouteSource.routeFor(detail.title)
+        val route = vm.route
         if (route == null) {
-            Text("Route unknown", color = SheetMuted, fontSize = 12.sp, modifier = Modifier.padding(bottom = 4.dp))
+            Text(if (vm.routeLookedUp) "Route unknown" else "Looking up route…", color = SheetMuted, fontSize = 12.sp, modifier = Modifier.padding(bottom = 4.dp))
         } else {
-            SheetFact("Route", route.label)
-            SheetFact("Progress", route.progress)
-            SheetFact("ETA", route.eta)
+            SheetFact("Scheduled route", route.label)
+            route.progress?.let { SheetFact("Progress", it) }
+            route.eta?.let { SheetFact("ETA", it) }
+            route.note?.let { Text(it, color = SheetMuted, fontSize = 11.sp) }
+            Text(route.credit.line, color = SheetMuted, fontSize = 10.sp, modifier = Modifier.padding(bottom = 4.dp))
         }
         SheetFact("Status", if (detail.onGround) "On ground" else "Flying")
         SheetFact("Type", detail.type)
@@ -256,7 +257,7 @@ fun StyleSwitch(vm: SkyViewModel, current: MapStyle) {
 
 /** One short credit line. The (i) opens every credit. */
 @Composable
-fun Credits(style: MapStyle, onAbout: () -> Unit) {
+fun Credits(style: MapStyle, extraRoutes: Boolean, onExtraRoutes: (Boolean) -> Unit, onAbout: () -> Unit) {
     var open by remember { mutableStateOf(false) }
     BackHandler(enabled = open) { open = false }
     if (open) {
@@ -266,11 +267,24 @@ fun Credits(style: MapStyle, onAbout: () -> Unit) {
             val lines = listOf(
                 "Map: ${style.credit}",
                 "ADS-B: © adsb.lol contributors (ODbL), OpenSky Network (non-commercial fallback)",
+                "Routes: VRS standing data (CC0)" + RouteSource.snapshotLabel.let { if (it.isBlank()) "" else ", snapshot $it" },
                 "Airports: OurAirports (public domain)",
                 "METAR: NOAA Aviation Weather Center (public domain)",
                 "Aircraft icons based on Pinhead by Quincy Morgan (CC0 1.0)",
             )
             for (line in lines) Text(line, color = SheetPaper, fontSize = 12.sp, lineHeight = 17.sp, modifier = Modifier.padding(vertical = 3.dp))
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth().clickable { onExtraRoutes(!extraRoutes) }, verticalAlignment = Alignment.CenterVertically) {
+                Text("Extra route sources (non-commercial)", color = SheetPaper, fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                androidx.compose.material3.Switch(checked = extraRoutes, onCheckedChange = onExtraRoutes)
+            }
+            for (line in listOf(
+                "Off by default. When on, callsigns missing from VRS are sent with their position to:",
+                "• adsb.lol API — Route data © adsb.lol contributors, ODbL",
+                "Not included:",
+                "• adsbdb — needs permission",
+                "• OpenSky Network — needs written permission",
+            )) Text(line, color = SheetMuted, fontSize = 11.sp, lineHeight = 15.sp)
             Spacer(Modifier.height(6.dp))
             Text("About and worker URL", color = SheetGold, fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { open = false; onAbout() }.padding(vertical = 6.dp))
         }

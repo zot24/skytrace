@@ -17,6 +17,8 @@ class MainActivity : ComponentActivity() {
             SyntheticTraffic.planes = intent.getIntExtra("synthetic", 0)
             SyntheticTraffic.camera = intent.getStringExtra("camera")
             SyntheticTraffic.overlay = intent.getBooleanExtra("overlay", true)
+            // Local mock for the opt-in adsb.lol route lookup, e.g. http://10.0.2.2:8799. Tests never hit adsb.lol itself.
+            intent.getStringExtra("routeApi")?.let { RouteSource.adsbLolBase = it }
         }
         MapLibre.getInstance(this)
         enableEdgeToEdge()

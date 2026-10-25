@@ -70,6 +70,13 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
     var count by mutableStateOf(0)
     var selected by mutableStateOf<String?>(null)
     var detail by mutableStateOf<PlaneDetail?>(null)
+    /** Null while looking up; [routeLookedUp] tells "unknown" apart from "not asked yet". */
+    var route by mutableStateOf<FlightRoute?>(null)
+    var routeLookedUp by mutableStateOf(false)
+    var extraRoutes by mutableStateOf(false)
+    private var routeCallsign: String? = null
+    private var routeResult: RouteResult? = null
+    private val airportsByIcao by lazy { airports.associateBy { it.icao } }
     var baseUrl by mutableStateOf(DEFAULT_BASE)
     var planeSymbols: PlaneSymbols? = null
         set(value) {
@@ -124,6 +131,11 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
             launch {
                 getApplication<Application>().skyStore.data.collect { next ->
                     applyPrefs(next[keyUrl], next[keyAircraft], next[keyAirports])
+                    extraRoutes = next[keyExtraRoutes] ?: false
+                    if (RouteSource.extraEnabled != extraRoutes) {
+                        RouteSource.extraEnabled = extraRoutes
+                        routeCallsign = null
+                    }
                 }
             }
             pollLoop()
@@ -131,6 +143,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) {
             val text = getApplication<Application>().assets.open("airports.json").bufferedReader().use { it.readText() }
             val parsed = parseAirports(text)
+            RouteSource.init(getApplication())
             withContext(Dispatchers.Main) {
                 airports = parsed
                 applyPendingLink()
@@ -488,7 +501,32 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun setExtraRoutes(on: Boolean) {
+        viewModelScope.launch { getApplication<Application>().skyStore.edit { it[keyExtraRoutes] = on } }
+    }
+
+    private fun trackRoute(plane: VisiblePlane, onGround: Boolean) {
+        val callsign = plane.callsign.trim()
+        if (callsign != routeCallsign) {
+            routeCallsign = callsign
+            routeResult = null
+            route = null
+            routeLookedUp = false
+            if (callsign.isEmpty()) { routeLookedUp = true; return }
+            viewModelScope.launch {
+                val found = withContext(Dispatchers.IO) { RouteSource.lookup(callsign, plane.lat, plane.lon) }
+                if (routeCallsign != callsign) return@launch
+                routeResult = found
+                routeLookedUp = true
+                route = found?.takeIf { airports.isNotEmpty() }?.let { describeRoute(it, airportsByIcao, plane, onGround, System.currentTimeMillis()) }
+            }
+            return
+        }
+        routeResult?.let { route = describeRoute(it, airportsByIcao, plane, onGround, System.currentTimeMillis()) }
+    }
+
     private fun toDetail(plane: VisiblePlane): PlaneDetail {
+        trackRoute(plane, isOnGround(plane.altFt, plane.gsKt))
         val heading = ((plane.trackDeg % 360.0) + 360.0) % 360.0
         return PlaneDetail(
             hex = plane.hex,
@@ -564,7 +602,7 @@ private fun thin(planes: List<VisiblePlane>, view: ViewBox, pins: Set<String>): 
     return out
 }
 
-private fun distanceNm(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+internal fun distanceNm(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
     val p1 = Math.toRadians(lat1)
     val p2 = Math.toRadians(lat2)
     val dp = p2 - p1
