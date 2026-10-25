@@ -108,10 +108,10 @@ class Fleet {
     }
 
     /** Main thread. A shallow copy, so a background merge never reads a map the frame loop is pruning. */
-    fun snapshot(): Map<String, Craft> = HashMap(craft)
+    internal fun snapshot(): Map<String, Craft> = HashMap(craft)
 
     /** Main thread. Swaps in a map built by [merge]. */
-    fun install(next: LinkedHashMap<String, Craft>) {
+    internal fun install(next: LinkedHashMap<String, Craft>) {
         craft = next
         trails.keys.retainAll(next.keys)
     }
