@@ -80,12 +80,12 @@ object SyntheticTraffic {
     }
 }
 
-/** Departure callsign / arrival callsign, destination, origin. All pairs exist in VRS routes; SKY123 is not in VRS, so it shows "Route unknown" while airborne. */
+/** Departure callsign / arrival callsign, destination, origin. All pairs exist in VRS routes; ZZT123 is not in VRS, so it shows "Route unknown" while airborne. */
 private val SYNTH_ROUTES = listOf(
     Triple("AAL100/AAL101", 51.4706 to -0.4619, 51.4706 to -0.4619),
     Triple("AAL117/AAL10", 33.9425 to -118.408, 33.9425 to -118.408),
     Triple("AAL1174/AAL1357", 25.7959 to -80.287, 25.7959 to -80.287),
-    Triple("JBU1/SKY123", 26.0726 to -80.1527, 42.3656 to -71.0096),
+    Triple("JBU1/ZZT123", 26.0726 to -80.1527, 42.3656 to -71.0096),
     Triple("AAL1229/AAL1221", 35.214 to -80.9431, 35.214 to -80.9431),
     Triple("AAL1473/AAL1175", 36.084 to -115.1537, 36.084 to -115.1537),
     Triple("AAL1186/AAL1040", 33.4342 to -112.0116, 32.8968 to -97.038),
