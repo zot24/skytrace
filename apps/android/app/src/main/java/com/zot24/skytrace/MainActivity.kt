@@ -20,7 +20,9 @@ class MainActivity : ComponentActivity() {
             if (ev.actionMasked == MotionEvent.ACTION_UP || ev.actionMasked == MotionEvent.ACTION_CANCEL) MapTouchRouter.routing = false
             return true
         }
-        if (ev.actionMasked == MotionEvent.ACTION_POINTER_DOWN && ev.pointerCount == 2) {
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN) MapTouchRouter.mapSawDown = false
+        // Only take over when the first finger landed on an overlay; if the map already has the gesture, leave it alone.
+        if (ev.actionMasked == MotionEvent.ACTION_POINTER_DOWN && ev.pointerCount == 2 && !MapTouchRouter.mapSawDown) {
             val cancel = MotionEvent.obtain(ev).apply { action = MotionEvent.ACTION_CANCEL }
             super.dispatchTouchEvent(cancel)
             cancel.recycle()
