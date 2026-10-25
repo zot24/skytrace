@@ -139,7 +139,11 @@ class Fleet {
         return out
     }
 
-    fun snapshotFor(hexes: Set<String>, now: Long): List<VisiblePlane> = hexes.mapNotNull { one(it, now) }
+    /** Prunes once, then poses each hex. Calling one() per hex pruned the whole fleet every time. */
+    fun snapshotFor(hexes: Set<String>, now: Long): List<VisiblePlane> {
+        prune(now)
+        return hexes.mapNotNull { hex -> craft[hex]?.let { pose(it, now) } }
+    }
 
     fun one(hex: String, now: Long): VisiblePlane? {
         prune(now)
