@@ -3,6 +3,7 @@ package com.zot24.skytrace
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -151,18 +152,21 @@ class FavouritesWidgetReceiver : GlanceAppWidgetReceiver() {
 
 class FavouritesWidget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
-        val prefs = context.skyStore.data.first()
-        val lines = prefs[keyWidgetSnapshot].orEmpty().lines().filter { it.isNotBlank() }.mapNotNull { raw ->
-            val f = raw.split('\t')
-            if (f.size == 5) WidgetLine(f[0], f[1], f[2], f[3], f[4]) else null
-        }
-        val updated = prefs[keyWidgetUpdated] ?: 0L
-        android.util.Log.i("skytrace-widget", "provideGlance id=$id lines=${lines.size}")
-        val ago = if (updated == 0L) "not updated yet" else {
-            val minutes = ((System.currentTimeMillis() - updated) / 60_000L).toInt()
-            if (minutes < 1) "updated just now" else "updated $minutes min ago"
-        }
+        val initial = context.skyStore.data.first()
         provideContent {
+            // Read inside the composition: provideGlance runs once per session, so values captured above it went
+            // stale while the session lived and updateAll() redrew the old snapshot.
+            val prefs = context.skyStore.data.collectAsState(initial).value
+            val lines = prefs[keyWidgetSnapshot].orEmpty().lines().filter { it.isNotBlank() }.mapNotNull { raw ->
+                val f = raw.split('\t')
+                if (f.size == 5) WidgetLine(f[0], f[1], f[2], f[3], f[4]) else null
+            }
+            val updated = prefs[keyWidgetUpdated] ?: 0L
+            android.util.Log.i("skytrace-widget", "compose id=$id lines=${lines.size} updated=$updated")
+            val ago = if (updated == 0L) "not updated yet" else {
+                val minutes = ((System.currentTimeMillis() - updated) / 60_000L).toInt()
+                if (minutes < 1) "updated just now" else "updated $minutes min ago"
+            }
             Column(
                 GlanceModifier.fillMaxWidth().wrapContentHeight().background(Color(0xF0080B10)).cornerRadius(16.dp).padding(12.dp),
             ) {
