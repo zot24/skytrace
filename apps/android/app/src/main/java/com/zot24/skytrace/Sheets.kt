@@ -99,12 +99,17 @@ fun FlightSheet(vm: SkyViewModel, detail: PlaneDetail, favourite: Boolean) {
         Spacer(Modifier.height(6.dp))
         // No licence-checked route source is wired in, so the route, progress and ETA stay unknown rather than guessed.
         val route = RouteSource.routeFor(detail.title)
-        SheetFact("Route", route?.label ?: "Route unknown", if (route == null) SheetMuted else SheetPaper)
-        SheetFact("Progress", route?.progress ?: "—")
-        SheetFact("ETA", route?.eta ?: "—")
+        if (route == null) {
+            Text("Route unknown", color = SheetMuted, fontSize = 12.sp, modifier = Modifier.padding(bottom = 4.dp))
+        } else {
+            SheetFact("Route", route.label)
+            SheetFact("Progress", route.progress)
+            SheetFact("ETA", route.eta)
+        }
+        SheetFact("Status", if (detail.onGround) "On ground" else "Flying")
         SheetFact("Type", detail.type)
         SheetFact("Registration", detail.reg)
-        SheetFact("Altitude", detail.altitude)
+        if (!detail.onGround) SheetFact("Altitude", detail.altitude)
         SheetFact("Ground speed", detail.speed)
         SheetFact("Heading", detail.heading)
         Spacer(Modifier.height(10.dp))
@@ -167,8 +172,7 @@ fun AirportSheet(vm: SkyViewModel, airport: Airport, favourite: Boolean) {
             fontWeight = FontWeight.Bold,
         )
         Spacer(Modifier.height(6.dp))
-        Text("METAR", color = SheetMuted, fontSize = 11.sp)
-        Text(vm.metar ?: "Loading…", color = SheetPaper, fontSize = 12.sp, fontFamily = FontFamily.Monospace, lineHeight = 16.sp)
+        WeatherBlock(vm.metar)
         Spacer(Modifier.height(8.dp))
         val tabs = listOf("Departures ${traffic.departures.size}", "Arrivals ${traffic.arrivals.size}", "Ground ${traffic.ground.size}")
         Row(Modifier.horizontalScroll(rememberScrollState())) {
@@ -295,4 +299,33 @@ fun Credits(style: MapStyle, onAbout: () -> Unit) {
             )
         }
     }
+}
+
+@Composable
+private fun WeatherBlock(raw: String?) {
+    val weather = raw?.let { decodeMetar(it) }
+    if (raw == null) {
+        Text("Loading weather…", color = SheetMuted, fontSize = 13.sp)
+        return
+    }
+    if (weather == null) {
+        Text(raw, color = SheetMuted, fontSize = 12.sp)
+        return
+    }
+    Row(verticalAlignment = Alignment.Bottom) {
+        Text(weather.temperatureC?.let { "$it°C" } ?: "—", color = SheetPaper, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.width(10.dp))
+        Column {
+            Text(weather.conditions, color = SheetPaper, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Text("Report ${ageText(weather.ageMin)}", color = SheetMuted, fontSize = 11.sp)
+        }
+    }
+    Spacer(Modifier.height(4.dp))
+    SheetFact("Wind", weather.wind)
+    weather.pressure?.let { SheetFact("Pressure", it) }
+    if (weather.dewPointC != null) {
+        SheetFact("Dew point", "${weather.dewPointC}°C" + (weather.humidityPct?.let { " · $it% humidity" } ?: ""))
+    }
+    Spacer(Modifier.height(4.dp))
+    Text(raw, color = SheetMuted, fontSize = 10.sp, fontFamily = FontFamily.Monospace, lineHeight = 13.sp)
 }

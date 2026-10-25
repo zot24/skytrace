@@ -44,6 +44,7 @@ data class PlaneDetail(
     val type: String,
     val reg: String,
     val altitude: String,
+    val onGround: Boolean,
     val speed: String,
     val heading: String,
 )
@@ -76,6 +77,8 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
             value?.setPlaneFilter(planeFilterExpression(typeChips.value))
         }
     var followHex by mutableStateOf<String?>(null)
+    var styleCover by mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null)
+    var styleLoading by mutableStateOf<MapStyle?>(null)
     var picker by mutableStateOf<List<PickerRow>>(emptyList())
     var airportSheet by mutableStateOf<Airport?>(null)
     var metar by mutableStateOf<String?>(null)
@@ -109,7 +112,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
             launch {
                 while (isActive) {
                     delay(5_000L)
-                    WidgetSync.refresh(getApplication(), fleet.snapshotFor(favouriteAircraft.value, System.currentTimeMillis()))
+                    WidgetSync.refresh(getApplication(), fleet.snapshotFor(fleet.snapshot().keys, System.currentTimeMillis()))
                     delay(115_000L)
                 }
             }
@@ -173,7 +176,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
                 plane.hex,
                 plane.callsign.ifBlank { plane.hex.uppercase(Locale.US) },
                 plane.typeCode.ifBlank { "—" },
-                "${numbers.format(plane.altFt.roundToInt())} ft",
+                if (isOnGround(plane.altFt, plane.gsKt)) "On ground" else "${numbers.format(plane.altFt.roundToInt())} ft",
             )
         }
     }
@@ -287,35 +290,8 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun airportTraffic(airport: Airport, now: Long): AirportTraffic {
-        val departures = ArrayList<TrafficRow>()
-        val arrivals = ArrayList<TrafficRow>()
-        val ground = ArrayList<TrafficRow>()
-        val near = fleet.visible(now, airport.lat - 0.8, airport.lat + 0.8, airport.lon - 1.1, airport.lon + 1.1)
-        for (plane in near) {
-            val nm = distanceNm(airport.lat, airport.lon, plane.lat, plane.lon)
-            val row = TrafficRow(
-                plane.hex,
-                plane.callsign.ifBlank { plane.hex.uppercase(Locale.US) },
-                plane.typeCode.ifBlank { "—" },
-                if (plane.altFt < 100) "ground" else "${numbers.format(plane.altFt.roundToInt())} ft",
-                nm.roundToInt(),
-            )
-            if (nm < 4.0 && (plane.altFt < 300 || plane.gsKt < 60)) {
-                ground += row
-                continue
-            }
-            if (nm > 40.0 || plane.altFt > 14_000) continue
-            val toField = bearing(plane.lat, plane.lon, airport.lat, airport.lon)
-            if (angleGap(plane.trackDeg, toField) < 50.0) arrivals += row
-            else if (angleGap(plane.trackDeg, (toField + 180.0) % 360.0) < 50.0) departures += row
-        }
-        return AirportTraffic(
-            departures.sortedBy { it.distanceNm },
-            arrivals.sortedBy { it.distanceNm },
-            ground.sortedBy { it.distanceNm },
-        )
-    }
+    fun airportTraffic(airport: Airport, now: Long): AirportTraffic =
+        classifyTraffic(airport, fleet.visible(now, airport.lat - 0.8, airport.lat + 0.8, airport.lon - 1.1, airport.lon + 1.1))
 
     fun rememberView(lat: Double, lon: Double, zoom: Double, pinned: Boolean) {
         if (!cameraWritable) return
@@ -387,7 +363,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
                 if (!cur.add(id)) cur.remove(id)
                 prefs[key] = cur
             }
-            WidgetSync.refresh(getApplication(), fleet.snapshotFor(favouriteAircraft.value + id, System.currentTimeMillis()))
+            WidgetSync.refresh(getApplication(), fleet.snapshotFor(fleet.snapshot().keys, System.currentTimeMillis()))
         }
     }
 
@@ -408,9 +384,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
         if (BuildConfig.DEBUG && SyntheticTraffic.planes > 0) {
             val now = System.currentTimeMillis()
             val rows = withContext(Dispatchers.Default) { SyntheticTraffic.rows(now) }
-            val started = android.os.SystemClock.elapsedRealtime()
-            fleet.accept(rows, now, fresh = true)
-            Log.i("skytrace-perf", "accept rows=${rows.size} mainMs=${android.os.SystemClock.elapsedRealtime() - started}")
+            acceptFresh(rows, now)
             applyPendingLink()
             source = "synthetic"
             count = fleet.tracked(now)
@@ -452,7 +426,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
         }
         val fresh = code in 200..299 && !body.stale && body.src != "none" && body.rows.isNotEmpty()
         if (fresh) {
-            fleet.accept(body.rows, now, fresh = true)
+            acceptFresh(body.rows, now)
             applyPendingLink()
             attempt = 0
             source = body.src.ifBlank { "adsb.lol" }
@@ -467,6 +441,18 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
         markStale(label, now)
         logCount(body.rows.size, true)
         return nextPollDelay(false, attempt, body.retryAfterMs)
+    }
+
+    /** The merge runs on Default. The main thread only copies the map and swaps the result in. */
+    private suspend fun acceptFresh(rows: List<PlaneRow>, now: Long) {
+        val t0 = android.os.SystemClock.elapsedRealtime()
+        val base = fleet.snapshot()
+        val t1 = android.os.SystemClock.elapsedRealtime()
+        val next = withContext(Dispatchers.Default) { merge(base, rows, now) }
+        val t2 = android.os.SystemClock.elapsedRealtime()
+        fleet.install(next)
+        val t3 = android.os.SystemClock.elapsedRealtime()
+        Log.i("skytrace-perf", "accept rows=${rows.size} mainMs=${(t1 - t0) + (t3 - t2)} bgMs=${t2 - t1}")
     }
 
     private fun logCount(rows: Int, stale: Boolean) {
@@ -510,6 +496,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
             type = plane.typeCode.ifBlank { "—" },
             reg = plane.reg.ifBlank { "—" },
             altitude = "${numbers.format(plane.altFt.roundToInt())} ft",
+            onGround = isOnGround(plane.altFt, plane.gsKt),
             speed = "${numbers.format(plane.gsKt.roundToInt())} kt",
             heading = "%03d°".format(Locale.US, heading.roundToInt() % 360),
         )
@@ -599,3 +586,36 @@ private fun angleGap(a: Double, b: Double): Double {
     val d = abs(((a - b) % 360.0 + 540.0) % 360.0 - 180.0)
     return d
 }
+
+fun classifyTraffic(airport: Airport, near: List<VisiblePlane>): AirportTraffic {
+    val numbers = java.text.NumberFormat.getIntegerInstance(Locale.US)
+    val departures = ArrayList<TrafficRow>()
+    val arrivals = ArrayList<TrafficRow>()
+    val ground = ArrayList<TrafficRow>()
+    for (plane in near) {
+        val nm = distanceNm(airport.lat, airport.lon, plane.lat, plane.lon)
+        val row = TrafficRow(
+            plane.hex,
+            plane.callsign.ifBlank { plane.hex.uppercase(Locale.US) },
+            plane.typeCode.ifBlank { "—" },
+            if (isOnGround(plane.altFt, plane.gsKt)) "On ground" else "${numbers.format(plane.altFt.roundToInt())} ft",
+            nm.roundToInt(),
+        )
+        if (nm < 4.0 && (plane.altFt < 300 || plane.gsKt < 60)) {
+            ground += row
+            continue
+        }
+        if (nm > 40.0 || plane.altFt > 14_000) continue
+        val toField = bearing(plane.lat, plane.lon, airport.lat, airport.lon)
+        if (angleGap(plane.trackDeg, toField) < 50.0) arrivals += row
+        else if (angleGap(plane.trackDeg, (toField + 180.0) % 360.0) < 50.0) departures += row
+    }
+    return AirportTraffic(
+        departures.sortedBy { it.distanceNm },
+        arrivals.sortedBy { it.distanceNm },
+        ground.sortedBy { it.distanceNm },
+    )
+}
+
+
+fun isOnGround(altFt: Double, gsKt: Double): Boolean = altFt < 50 || (altFt < 300 && gsKt < 50)

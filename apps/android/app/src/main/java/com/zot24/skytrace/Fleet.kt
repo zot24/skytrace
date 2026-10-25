@@ -52,7 +52,7 @@ fun project(lat0: Double, lon0: Double, gsKt: Double, trackDeg: Double, dtSec: D
     return lat to lon
 }
 
-private data class Craft(
+internal data class Craft(
     val row: PlaneRow,
     val fixAtMs: Long,
     val anchorLat: Double,
@@ -62,7 +62,7 @@ private data class Craft(
 )
 
 class Fleet {
-    private val craft = LinkedHashMap<String, Craft>()
+    private var craft = LinkedHashMap<String, Craft>()
     private val trails = HashMap<String, ArrayDeque<Triple<Double, Double, Long>>>()
     private val deadScratch = ArrayList<String>(8)
 
@@ -105,6 +105,15 @@ class Fleet {
             craft.remove(hex)
             trails.remove(hex)
         }
+    }
+
+    /** Main thread. A shallow copy, so a background merge never reads a map the frame loop is pruning. */
+    fun snapshot(): Map<String, Craft> = HashMap(craft)
+
+    /** Main thread. Swaps in a map built by [merge]. */
+    fun install(next: LinkedHashMap<String, Craft>) {
+        craft = next
+        trails.keys.retainAll(next.keys)
     }
 
     fun tracked(now: Long): Int {
@@ -265,4 +274,35 @@ private fun splitAntimeridian(points: List<Pair<Double, Double>>): List<List<Pai
     }
     if (current.size >= 2) lines.add(current)
     return lines
+}
+
+/** Any thread. The fresh-poll half of [Fleet.accept], built from a [Fleet.snapshot]: same easing anchors, same drop rule. */
+internal fun merge(base: Map<String, Craft>, rows: List<PlaneRow>, now: Long): LinkedHashMap<String, Craft> {
+    val next = LinkedHashMap<String, Craft>(rows.size * 2)
+    for (row in rows) {
+        if (row.hex.isEmpty()) continue
+        val existing = base[row.hex]
+        if (existing == null) {
+            next[row.hex] = Craft(row, now, row.lat, row.lon, row.trackDeg, Long.MIN_VALUE)
+            continue
+        }
+        val pose = pose(existing, now)
+        val merged = existing.row.copy(
+            callsign = row.callsign.ifBlank { existing.row.callsign },
+            lat = row.lat,
+            lon = row.lon,
+            altFt = row.altFt,
+            gsKt = row.gsKt,
+            trackDeg = row.trackDeg,
+            typeCode = row.typeCode.ifBlank { existing.row.typeCode },
+            reg = row.reg.ifBlank { existing.row.reg },
+            category = row.category.ifBlank { existing.row.category },
+        )
+        next[row.hex] = if (pose == null) {
+            Craft(merged, now, row.lat, row.lon, row.trackDeg, Long.MIN_VALUE)
+        } else {
+            Craft(merged, now, pose.lat, pose.lon, pose.trackDeg, now)
+        }
+    }
+    return next
 }

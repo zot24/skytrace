@@ -22,6 +22,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -73,6 +74,10 @@ fun SkyScreen(vm: SkyViewModel = viewModel()) {
         focusManager.clearFocus(force = true)
         if (query.isNotEmpty()) query = ""
     }
+    // Any path that opens a sheet (search pick, favourite, widget link) closes the search dropdown first.
+    LaunchedEffect(vm.airportSheet?.icao, vm.detail?.hex) {
+        if (vm.airportSheet != null || vm.detail != null) dismissSearch()
+    }
     val chips by vm.typeChips.collectAsState()
     val mapStyle by vm.mapStyle.collectAsState()
     val showOverlay = BuildConfig.DEBUG && SyntheticTraffic.overlay
@@ -93,6 +98,14 @@ fun SkyScreen(vm: SkyViewModel = viewModel()) {
             onFpsLine = if (showOverlay) ({ fpsLine = it }) else null,
             onUserGesture = { if (searchOpen) dismissSearch() },
         )
+        vm.styleCover?.let { cover ->
+            androidx.compose.foundation.Image(
+                cover,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = androidx.compose.ui.layout.ContentScale.FillBounds,
+            )
+        }
         Column(
             Modifier
                 .fillMaxWidth()
@@ -125,7 +138,17 @@ fun SkyScreen(vm: SkyViewModel = viewModel()) {
                 }
             }
             Spacer(Modifier.height(8.dp))
-            StyleSwitch(vm, mapStyle)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                StyleSwitch(vm, mapStyle)
+                vm.styleLoading?.let { loading ->
+                    Text(
+                        "Loading ${loading.label.lowercase()}…",
+                        color = Muted,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(start = 10.dp).clip(Pill).background(Panel).padding(horizontal = 10.dp, vertical = 5.dp),
+                    )
+                }
+            }
             Spacer(Modifier.height(8.dp))
             Row(
                 Modifier

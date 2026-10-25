@@ -12,6 +12,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import org.maplibre.geojson.Point
@@ -38,6 +39,7 @@ import java.util.Locale
 
 private const val EMPTY = """{"type":"FeatureCollection","features":[]}"""
 private const val FPS_TAG = "skytrace-fps"
+private const val STYLE_TAG = "skytrace-style"
 
 @Composable
 fun SkyMap(
@@ -140,6 +142,14 @@ fun SkyMap(
                         map.cameraPosition.zoom,
                         holder.userMoved || holder.followJump,
                     )
+                }
+                mapView.addOnDidFinishRenderingMapListener { fully ->
+                    val pending = holder.coverStyle ?: return@addOnDidFinishRenderingMapListener
+                    if (!fully || holder.style == null) return@addOnDidFinishRenderingMapListener
+                    Log.i(STYLE_TAG, "style=$pending fullyRenderedMs=${SystemClock.elapsedRealtime() - holder.styleStartedMs}")
+                    holder.coverStyle = null
+                    vm.styleCover = null
+                    vm.styleLoading = null
                 }
                 if (BuildConfig.DEBUG) {
                     val frameListener = MapView.OnDidFinishRenderingFrameListener { _, _, _ ->
@@ -315,6 +325,8 @@ private class MapHolder {
     var wantedStyle: MapStyle = MapStyle.DARK
     var onStyleReady: (() -> Unit)? = null
     var lastFollowMs: Long = 0L
+    var styleStartedMs: Long = 0L
+    var coverStyle: MapStyle? = null
     var inViewPlanes: Int = 0
     var pinsInView: Int = 0
     var pinsDrawn: Int = 0
@@ -348,9 +360,38 @@ private class MapHolder {
 private fun loadStyle(map: MapLibreMap, holder: MapHolder, vm: SkyViewModel, mapView: MapView) {
     val wanted = holder.wantedStyle
     if (holder.loadedStyle == wanted) return
+    val first = holder.loadedStyle == null
     holder.loadedStyle = wanted
+    if (first) {
+        applyStyle(map, holder, vm, mapView, wanted)
+        return
+    }
+    // Keep a still of the old style on screen until the new one has drawn every tile.
+    val t0 = SystemClock.elapsedRealtime()
+    map.snapshot { bitmap ->
+        if (!holder.alive || holder.loadedStyle != wanted) return@snapshot
+        vm.styleCover = bitmap.asImageBitmap()
+        vm.styleLoading = wanted
+        Log.i(STYLE_TAG, "style=$wanted snapshotMs=${SystemClock.elapsedRealtime() - t0}")
+        applyStyle(map, holder, vm, mapView, wanted)
+    }
+}
+
+private fun applyStyle(map: MapLibreMap, holder: MapHolder, vm: SkyViewModel, mapView: MapView, wanted: MapStyle) {
     holder.style = null
+    val started = SystemClock.elapsedRealtime()
+    holder.styleStartedMs = started
+    holder.coverStyle = wanted
+    mapView.postDelayed({
+        if (holder.coverStyle == wanted && vm.styleCover != null) {
+            Log.i(STYLE_TAG, "style=$wanted cover timeout after ${SystemClock.elapsedRealtime() - started}ms")
+            holder.coverStyle = null
+            vm.styleCover = null
+            vm.styleLoading = null
+        }
+    }, 15_000L)
     map.setStyle(styleBuilder(wanted)) { style ->
+        Log.i(STYLE_TAG, "style=$wanted styleLoadedMs=${SystemClock.elapsedRealtime() - started}")
         if (holder.loadedStyle != wanted || !holder.alive) return@setStyle
         if (wanted == MapStyle.TERRAIN) addTerrain(style)
         vm.planeSymbols = install(style, vm.airports, mapView.context)
