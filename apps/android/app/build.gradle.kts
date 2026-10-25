@@ -47,6 +47,8 @@ val copyAirports = tasks.register<Copy>("copyAirports") {
     from(rootProject.layout.projectDirectory.file("../../public/airports.json"))
     // VRS standing data routes table (CC0), rebuilt by tools/update-vrs-routes.sh.
     from(rootProject.layout.projectDirectory.file("data/vrs-routes.txt.gz"))
+    // Satellite style (EOxCloudless 2025, CC BY-NC-SA 4.0).
+    from(rootProject.layout.projectDirectory.file("data/satellite.json"))
     into(layout.projectDirectory.dir("src/main/assets"))
 }
 

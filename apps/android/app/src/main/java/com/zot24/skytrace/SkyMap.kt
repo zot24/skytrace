@@ -127,6 +127,7 @@ fun SkyMap(
                 false
             }
             mapView.getMapAsync { map ->
+                SatellitePrefetch.setUpCache(mapView.context)
                 holder.map = map
                 map.addOnCameraMoveStartedListener { reason ->
                     if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) {
@@ -141,6 +142,7 @@ fun SkyMap(
                         Log.i("skytrace-cam", "idle zoom=%.2f bearing=%.1f tilt=%.1f".format(java.util.Locale.US, c.zoom, c.bearing, c.tilt))
                     }
                     if (!holder.appliedOpening) return@addOnCameraIdleListener
+                    if (holder.loadedStyle == MapStyle.SATELLITE) SatellitePrefetch.maybePrefetch(mapView.context, map)
                     val target = map.cameraPosition.target ?: return@addOnCameraIdleListener
                     vm.rememberView(
                         target.latitude,
@@ -149,9 +151,13 @@ fun SkyMap(
                         holder.userMoved || holder.followJump,
                     )
                 }
-                mapView.addOnDidFinishRenderingMapListener { fully ->
-                    val pending = holder.coverStyle ?: return@addOnDidFinishRenderingMapListener
-                    if (!fully || holder.style == null) return@addOnDidFinishRenderingMapListener
+                // The map-level "finished rendering" event only fires when the map goes idle. The plane layer is
+                // re-pushed every frame, so the map rarely goes idle and the cover used to wait for its timeout.
+                // Each rendered frame reports whether every needed tile was drawn, so clear the cover on the first
+                // fully drawn frame of the new style instead.
+                mapView.addOnDidFinishRenderingFrameListener { fully, _, _ ->
+                    val pending = holder.coverStyle ?: return@addOnDidFinishRenderingFrameListener
+                    if (!fully || holder.style == null || holder.loadedStyle != pending) return@addOnDidFinishRenderingFrameListener
                     Log.i(STYLE_TAG, "style=$pending fullyRenderedMs=${SystemClock.elapsedRealtime() - holder.styleStartedMs}")
                     holder.coverStyle = null
                     vm.styleCover = null

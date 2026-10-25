@@ -23,7 +23,7 @@ enum class MapStyle(val label: String, val credit: String) {
 fun styleBuilder(style: MapStyle): Style.Builder = when (style) {
     MapStyle.DARK -> Style.Builder().fromUri("https://tiles.openfreemap.org/styles/dark")
     MapStyle.TERRAIN -> Style.Builder().fromUri("https://tiles.openfreemap.org/styles/liberty")
-    MapStyle.SATELLITE -> Style.Builder().fromJson(SATELLITE_JSON)
+    MapStyle.SATELLITE -> Style.Builder().fromUri(SATELLITE_STYLE_URL)
 }
 
 fun addTerrain(style: Style) {
@@ -47,10 +47,5 @@ const val EOX_ATTRIBUTION = "EOxCloudless https://cloudless.eox.at by EOX IT Ser
 // EOxCloudless (Sentinel-2 cloudless) 2025, WMTS layer s2cloudless-2025_3857, matrix set GoogleMapsCompatible.
 // Native pyramid is z0–14 in EPSG:3857 (cloudless.eox.at product list), so maxzoom 14: MapLibre over-zooms past it.
 // CC BY-NC-SA 4.0: non-commercial use only.
-private const val SATELLITE_JSON = """{"version":8,
-"glyphs":"https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf",
-"sources":{
-"eox":{"type":"raster","tileSize":256,"minzoom":0,"maxzoom":14,"tiles":["https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2025_3857/default/GoogleMapsCompatible/{z}/{y}/{x}.jpg"]}},
-"layers":[
-{"id":"bg","type":"background","paint":{"background-color":"#05070a"}},
-{"id":"eox","type":"raster","source":"eox"}]}"""
+/** Style lives in data/satellite.json (copied into assets) so the offline prefetcher can address it by URL. */
+const val SATELLITE_STYLE_URL = "asset://satellite.json"

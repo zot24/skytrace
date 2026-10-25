@@ -647,3 +647,13 @@ fun classifyTraffic(airport: Airport, near: List<VisiblePlane>): AirportTraffic 
 
 
 fun isOnGround(altFt: Double, gsKt: Double): Boolean = altFt < 50 || (altFt < 300 && gsKt < 50)
+
+/** Credit only the feed whose planes are on screen: none for synthetic traffic or before any data. */
+fun feedCredit(source: String): String? {
+    val base = source.removeSuffix(" · stale")
+    return when {
+        base.contains("opensky", ignoreCase = true) -> "OpenSky"
+        base.contains("adsb", ignoreCase = true) -> "adsb.lol"
+        else -> null
+    }
+}
