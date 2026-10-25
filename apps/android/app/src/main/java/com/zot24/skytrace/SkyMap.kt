@@ -175,6 +175,7 @@ fun SkyMap(
                 val planeJson = StringBuilder(64 * 1024)
                 val trailJson = StringBuilder(4 * 1024)
                 holder.onStyleReady = {
+                    if (holder.loadedStyle == MapStyle.SATELLITE) SatellitePrefetch.maybePrefetch(mapView.context, map)
                     if (holder.callback == null) {
                     val callback = object : Choreographer.FrameCallback {
                         override fun doFrame(frameTimeNanos: Long) {
@@ -182,7 +183,10 @@ fun SkyMap(
                             val clock = SystemClock.elapsedRealtime()
                             val zoom = map.cameraPosition.zoom
                             val interval = if (zoom < PLANE_CULL_ZOOM) LOW_ZOOM_PUSH_MS else HIGH_ZOOM_PUSH_MS
-                            if (holder.pushBusy || clock - holder.lastPushMs < interval) {
+                            // While the cover hides a style switch, stop re-pushing planes: each setGeoJson re-tiles the
+                            // planes source, and a frame only counts as fully drawn when no source is mid-update. Pushing
+                            // every frame kept "fully" false for seconds (Terrain timed out at 15 s under load).
+                            if (holder.pushBusy || holder.coverStyle != null || clock - holder.lastPushMs < interval) {
                                 Choreographer.getInstance().postFrameCallback(this)
                                 return
                             }
