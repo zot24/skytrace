@@ -501,7 +501,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun setExtraRoutes(on: Boolean) {
+    fun saveExtraRoutes(on: Boolean) {
         viewModelScope.launch { getApplication<Application>().skyStore.edit { it[keyExtraRoutes] = on } }
     }
 
