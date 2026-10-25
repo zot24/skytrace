@@ -5,8 +5,8 @@ compatibility_date = "2026-10-01"
 [vars]
 # adsb.lol publishes no numeric limit, so one request per 15s across all tiles.
 POLL_SECONDS = "15"
-# lat,lon,radiusNm per tile (Canary Islands; Asuncion), polled round-robin. 250nm is the API maximum.
-TILES = "28.4,-15.8,150;-25.28,-57.63,250"
+# lat,lon,radiusNm per tile (Canary Islands), polled round-robin. 250nm is the API maximum.
+TILES = "28.4,-15.8,150"
 
 [[durable_objects.bindings]]
 name = "POLLER"
