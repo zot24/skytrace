@@ -1,5 +1,6 @@
 package com.zot24.skytrace
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -253,6 +254,7 @@ fun StyleSwitch(vm: SkyViewModel, current: MapStyle) {
 @Composable
 fun Credits(style: MapStyle, onAbout: () -> Unit) {
     var open by remember { mutableStateOf(false) }
+    BackHandler(enabled = open) { open = false }
     if (open) {
         SwipeSheet("credits", onDismiss = { open = false }) {
             SheetTitle("Credits", null, {}, { open = false })
@@ -269,7 +271,15 @@ fun Credits(style: MapStyle, onAbout: () -> Unit) {
             Text("About and worker URL", color = SheetGold, fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { open = false; onAbout() }.padding(vertical = 6.dp))
         }
     } else {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(999.dp))
+                .background(SheetPanel)
+                .clickable { open = true }
+                .padding(start = 12.dp),
+        ) {
             Text(
                 style.credit.substringBefore(" · ") + " · adsb.lol",
                 color = Color(0xC7E8EEF6),
