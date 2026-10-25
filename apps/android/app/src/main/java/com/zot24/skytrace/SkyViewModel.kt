@@ -73,7 +73,6 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
     /** Null while looking up; [routeLookedUp] tells "unknown" apart from "not asked yet". */
     var route by mutableStateOf<FlightRoute?>(null)
     var routeLookedUp by mutableStateOf(false)
-    var extraRoutes by mutableStateOf(false)
     private var routeCallsign: String? = null
     private var routeResult: RouteResult? = null
     private val airportsByIcao by lazy { airports.associateBy { it.icao } }
@@ -131,11 +130,6 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
             launch {
                 getApplication<Application>().skyStore.data.collect { next ->
                     applyPrefs(next[keyUrl], next[keyAircraft], next[keyAirports])
-                    extraRoutes = next[keyExtraRoutes] ?: false
-                    if (RouteSource.extraEnabled != extraRoutes) {
-                        RouteSource.extraEnabled = extraRoutes
-                        routeCallsign = null
-                    }
                 }
             }
             pollLoop()
@@ -501,10 +495,6 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun saveExtraRoutes(on: Boolean) {
-        viewModelScope.launch { getApplication<Application>().skyStore.edit { it[keyExtraRoutes] = on } }
-    }
-
     private fun trackRoute(plane: VisiblePlane, onGround: Boolean) {
         val callsign = plane.callsign.trim()
         if (callsign != routeCallsign) {
@@ -514,7 +504,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
             routeLookedUp = false
             if (callsign.isEmpty()) { routeLookedUp = true; return }
             viewModelScope.launch {
-                val found = withContext(Dispatchers.IO) { RouteSource.lookup(callsign, plane.lat, plane.lon) }
+                val found = withContext(Dispatchers.IO) { RouteSource.lookup(callsign) }
                 if (routeCallsign != callsign) return@launch
                 routeResult = found
                 routeLookedUp = true

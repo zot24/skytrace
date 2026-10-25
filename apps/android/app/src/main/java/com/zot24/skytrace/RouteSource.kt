@@ -2,12 +2,9 @@ package com.zot24.skytrace
 
 import android.content.Context
 import android.util.Log
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
-import org.json.JSONObject
 import java.io.File
 import java.io.RandomAccessFile
 import java.util.concurrent.TimeUnit
@@ -15,10 +12,9 @@ import java.util.concurrent.TimeUnit
 /** Where a route came from, with the licence line the sheet shows under it. */
 enum class RouteCredit(val line: String) {
     VRS("Route: VRS standing data (CC0)"),
-    ADSB_LOL("Route data © adsb.lol contributors, ODbL"),
 }
 
-data class RouteResult(val airports: List<String>, val credit: RouteCredit, val plausible: Boolean? = null)
+data class RouteResult(val airports: List<String>, val credit: RouteCredit)
 
 /** What the flight sheet shows. Progress and ETA are null unless they can be computed from the position. */
 data class FlightRoute(val label: String, val progress: String?, val eta: String?, val credit: RouteCredit, val note: String?)
@@ -30,19 +26,14 @@ data class FlightRoute(val label: String, val progress: String?, val eta: String
  * (data/vrs-routes.txt.gz, built by tools/update-vrs-routes.sh). The airline block a lookup needs
  * is refreshed from raw.githubusercontent.com/vradarserver/standing-data at most once a week.
  *
- * Opt-in ("Extra route sources (non-commercial)"): the adsb.lol API routeset endpoint (ODbL), asked
- * only for callsigns VRS does not have. adsbdb and OpenSky are not used: both need permission.
+ * VRS is the only route source. Other route sets were checked and left out on licence grounds.
  */
 object RouteSource {
     private const val TAG = "skytrace-route"
     private const val VRS_RAW = "https://raw.githubusercontent.com/vradarserver/standing-data/main/routes/schema-01"
     private const val VRS_LIST = "https://api.github.com/repos/vradarserver/standing-data/contents/routes/schema-01"
-    const val ADSB_LOL_BASE = "https://api.adsb.lol"
     private const val WEEK_MS = 7L * 24 * 3600_000L
 
-    /** Debug builds may point the adsb.lol lookup at a local mock; release always uses [ADSB_LOL_BASE]. */
-    @Volatile var adsbLolBase: String = ADSB_LOL_BASE
-    @Volatile var extraEnabled: Boolean = false
     @Volatile var snapshotLabel: String = ""
     private var snapshotMs = 0L
 
@@ -54,7 +45,6 @@ object RouteSource {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Map<String, String>>?) = size > 48
     }
     private val tried = HashMap<String, Long>()
-    private val extraCache = HashMap<String, Pair<Long, RouteResult?>>()
 
     /** Unpacks the bundled snapshot once and indexes it by callsign prefix. Call off the main thread. */
     @Synchronized
@@ -96,16 +86,14 @@ object RouteSource {
         Log.i(TAG, "vrs snapshot=$snapshotLabel prefixes=${index.size} initMs=${(System.nanoTime() - started) / 1_000_000}")
     }
 
-    /** Blocking lookup, call off the main thread. [lat]/[lon] are only sent to the opt-in source. */
-    fun lookup(callsign: String, lat: Double, lon: Double): RouteResult? {
+    /** Blocking lookup, call off the main thread. */
+    fun lookup(callsign: String): RouteResult? {
         val cs = callsign.trim().uppercase()
         if (cs.length < 4 || bundle == null) return null
         val prefix = cs.take(3)
         refreshIfStale(prefix)
         val codes = block(prefix)[cs.drop(3)]
-        if (codes != null) return RouteResult(codes.split('-'), RouteCredit.VRS)
-        if (extraEnabled) return adsbLol(cs, lat, lon)
-        return null
+        return codes?.let { RouteResult(it.split('-'), RouteCredit.VRS) }
     }
 
     @Synchronized
@@ -160,31 +148,6 @@ object RouteSource {
             Log.w(TAG, "vrs refresh failed prefix=$prefix ${e.message}")
         }
     }
-
-    /** POST /api/0/routeset is the current adsb.lol route endpoint; GET /api/0/route/{callsign} is deprecated upstream. */
-    private fun adsbLol(cs: String, lat: Double, lon: Double): RouteResult? {
-        val now = System.currentTimeMillis()
-        synchronized(extraCache) { extraCache[cs]?.let { if (it.first > now - 20 * 60_000L) return it.second } }
-        val result = try {
-            val body = JSONObject().put("planes", JSONArray().put(JSONObject().put("callsign", cs).put("lat", lat).put("lng", lon))).toString()
-            val request = Request.Builder().url("${adsbLolBase.trimEnd('/')}/api/0/routeset")
-                .post(body.toRequestBody("application/json".toMediaType())).build()
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) null else {
-                    val first = JSONArray(response.body?.string().orEmpty()).optJSONObject(0)
-                    val codes = first?.optString("airport_codes").orEmpty()
-                    if (codes.isBlank() || codes == "unknown") null
-                    else RouteResult(codes.split('-'), RouteCredit.ADSB_LOL, if (first!!.has("plausible")) first.optBoolean("plausible") else null)
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "adsb.lol route failed ${e.message}")
-            null
-        }
-        Log.i(TAG, "extra source=adsb.lol callsign=$cs found=${result != null}")
-        synchronized(extraCache) { extraCache[cs] = now to result }
-        return result
-    }
 }
 
 /**
@@ -193,10 +156,10 @@ object RouteSource {
  */
 fun describeRoute(route: RouteResult, airports: Map<String, Airport>, plane: VisiblePlane, onGround: Boolean, now: Long): FlightRoute {
     val label = route.airports.joinToString(" → ") { code -> airports[code]?.iata?.ifBlank { null } ?: code }
-    val note = if (route.plausible == false) "Not plausible for this position" else null
+    val note: String? = null
     val from = airports[route.airports.first()]
     val to = airports[route.airports.last()]
-    if (route.airports.size != 2 || from == null || to == null || onGround || plane.gsKt < 80 || route.plausible == false) {
+    if (route.airports.size != 2 || from == null || to == null || onGround || plane.gsKt < 80) {
         return FlightRoute(label, null, null, route.credit, note)
     }
     val total = distanceNm(from.lat, from.lon, to.lat, to.lon)

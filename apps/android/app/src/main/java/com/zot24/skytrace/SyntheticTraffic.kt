@@ -80,7 +80,7 @@ object SyntheticTraffic {
     }
 }
 
-/** Departure callsign / arrival callsign, destination, origin. All pairs exist in VRS routes; SKY123 does not (adsb.lol mock fixture). */
+/** Departure callsign / arrival callsign, destination, origin. All pairs exist in VRS routes; SKY123 is not in VRS, so it shows "Route unknown" while airborne. */
 private val SYNTH_ROUTES = listOf(
     Triple("AAL100/AAL101", 51.4706 to -0.4619, 51.4706 to -0.4619),
     Triple("AAL117/AAL10", 33.9425 to -118.408, 33.9425 to -118.408),
