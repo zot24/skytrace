@@ -143,7 +143,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) {
             val text = getApplication<Application>().assets.open("airports.json").bufferedReader().use { it.readText() }
             val parsed = parseAirports(text)
-            RouteSource.init(getApplication())
+            runCatching { RouteSource.init(getApplication()) }.onFailure { android.util.Log.w("skytrace-route", "vrs init failed", it) }
             withContext(Dispatchers.Main) {
                 airports = parsed
                 applyPendingLink()

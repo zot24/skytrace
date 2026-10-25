@@ -11,7 +11,6 @@ import org.json.JSONObject
 import java.io.File
 import java.io.RandomAccessFile
 import java.util.concurrent.TimeUnit
-import java.util.zip.GZIPInputStream
 
 /** Where a route came from, with the licence line the sheet shows under it. */
 enum class RouteCredit(val line: String) {
@@ -67,7 +66,8 @@ object RouteSource {
         val stamp = File(root, "vrs-routes.version")
         val apkVersion = context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime.toString()
         if (!unpacked.exists() || stamp.takeIf { it.exists() }?.readText() != apkVersion) {
-            GZIPInputStream(context.assets.open("vrs-routes.txt.gz")).use { input -> unpacked.outputStream().use { input.copyTo(it) } }
+            // The build ships data/vrs-routes.txt.gz; AGP stores it inflated as assets/vrs-routes.txt (deflated in the APK).
+            context.assets.open("vrs-routes.txt").use { input -> unpacked.outputStream().use { input.copyTo(it) } }
             stamp.writeText(apkVersion)
         }
         RandomAccessFile(unpacked, "r").use { file ->
