@@ -42,6 +42,7 @@ class MainActivity : ComponentActivity() {
             SyntheticTraffic.overlay = intent.getBooleanExtra("overlay", true)
         }
         MapLibre.getInstance(this)
+        SatellitePrefetch.installHttp(this)
         enableEdgeToEdge()
         if (savedInstanceState == null) vm.openLink(intent?.dataString)
         setContent {

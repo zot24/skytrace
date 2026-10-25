@@ -10,6 +10,8 @@ import org.maplibre.android.offline.OfflineRegion
 import org.maplibre.android.offline.OfflineRegionError
 import org.maplibre.android.offline.OfflineRegionStatus
 import org.maplibre.android.offline.OfflineTilePyramidRegionDefinition
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.ResponseBody.Companion.toResponseBody
 import kotlin.math.PI
 import kotlin.math.floor
 import kotlin.math.ln
@@ -26,6 +28,27 @@ import kotlin.math.tan
  */
 object SatellitePrefetch {
     private const val TAG = "skytrace-prefetch"
+
+    /**
+     * The offline downloader fetches a region's style over HTTP only; with asset://satellite.json it logged
+     * "Unable to parse resourceUrl asset://satellite.json" and stalled at 0/1. Regions use this URL instead,
+     * and [installHttp] answers it from the bundled asset, so nothing leaves the device for the style.
+     */
+    private const val OFFLINE_STYLE_URL = "https://skytrace.invalid/satellite.json"
+
+    fun installHttp(context: Context) {
+        val assets = context.applicationContext.assets
+        val dispatcher = okhttp3.Dispatcher().apply { maxRequestsPerHost = 20 }
+        val client = okhttp3.OkHttpClient.Builder().dispatcher(dispatcher).addInterceptor { chain ->
+            val request = chain.request()
+            if (request.url.host != "skytrace.invalid") return@addInterceptor chain.proceed(request)
+            val body = assets.open(request.url.encodedPath.trimStart('/')).use { it.readBytes() }
+            okhttp3.Response.Builder().request(request).protocol(okhttp3.Protocol.HTTP_1_1).code(200).message("OK")
+                .body(body.toResponseBody("application/json".toMediaType()))
+                .build()
+        }.build()
+        org.maplibre.android.module.http.HttpRequestUtil.setOkHttpClient(client)
+    }
     const val CACHE_BYTES = 256L * 1024 * 1024
     private const val MAX_TILES = 200
     private const val LEVELS = 3
@@ -67,7 +90,7 @@ object SatellitePrefetch {
         if (count > MAX_TILES) return
         val bounds = LatLngBounds.from(north, east, south, west)
         val ratio = context.resources.displayMetrics.density
-        val definition = OfflineTilePyramidRegionDefinition(SATELLITE_STYLE_URL, bounds, low.toDouble(), high.toDouble(), ratio)
+        val definition = OfflineTilePyramidRegionDefinition(OFFLINE_STYLE_URL, bounds, low.toDouble(), high.toDouble(), ratio)
         busy = true
         val started = SystemClock.elapsedRealtime()
         val manager = OfflineManager.getInstance(context)
