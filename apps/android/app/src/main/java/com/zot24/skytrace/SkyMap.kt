@@ -117,6 +117,7 @@ fun SkyMap(
         factory = {
             mapView.isFocusableInTouchMode = true
             mapView.setOnTouchListener { _, event ->
+                if (event.actionMasked == android.view.MotionEvent.ACTION_DOWN) MapTouchRouter.mapSawDown = true
                 val action = event.actionMasked
                 if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_UP) {
                     holder.touchX = event.x

@@ -6,13 +6,7 @@ import org.maplibre.android.maps.MapView
 /** Replays a multi-finger gesture straight into the map view, in its own coordinates. */
 object MapTouchRouter {
     var view: MapView? = null
-        set(value) {
-            field = value
-            value?.setOnTouchListener { _, e ->
-                if (e.actionMasked == MotionEvent.ACTION_DOWN) mapSawDown = true
-                false
-            }
-        }
+    /** Set by the map's touch listener in SkyMap when a gesture's first finger reached the map. */
     var mapSawDown = false
     var routing = false
 
