@@ -178,7 +178,7 @@ fun SkyScreen(vm: SkyViewModel = viewModel()) {
                         FavouriteBlock(vm, favAirports, favAircraft)
                     }
                     hits.forEach { airport ->
-                        AirportRow(airport, favAirports.contains(airport.icao), { vm.focusAirport(airport); query = airport.iata.ifBlank { airport.icao } }) {
+                        AirportRow(airport, favAirports.contains(airport.icao), { vm.focusAirport(airport); dismissSearch() }) {
                             vm.toggleAirport(airport.icao)
                         }
                     }
