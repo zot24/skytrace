@@ -4,8 +4,8 @@ Polls adsb.lol from a Durable Object alarm, keeps each aircraft's flight path, a
 
 ```sh
 npm install && npm run dev
-curl 'http://127.0.0.1:8788/trails?hex=4ca7b5'
-curl 'http://127.0.0.1:8788/trails?bbox=5,48,12,52'   # minLon,minLat,maxLon,maxLat
+curl 'http://127.0.0.1:8788/trails?hex=<icao>'
+curl 'http://127.0.0.1:8788/trails?bbox=-18.5,27.5,-13,29.5'   # minLon,minLat,maxLon,maxLat
 ```
 
 Open flights live in the Durable Object; closed ones (10 min unseen or on the ground) are gzipped to R2 as `hex/date/flightId`.

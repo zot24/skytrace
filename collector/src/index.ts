@@ -87,7 +87,9 @@ export class Poller extends DurableObject<Env> {
   async alarm(): Promise<void> {
     const tiles = this.env.TILES.split(";").map((t) => t.split(",").map(Number));
     const interval = Number(this.env.POLL_SECONDS) * 1000;
-    const [lat, lon, nm] = tiles[Math.floor(Date.now() / interval) % tiles.length];
+    const turn = this.ctx.storage.kv.get<number>("turn") ?? 0;
+    this.ctx.storage.kv.put("turn", turn + 1);
+    const [lat, lon, nm] = tiles[turn % tiles.length];
     try {
       const res = await fetch(`https://api.adsb.lol/v2/point/${lat}/${lon}/${nm}`, {
         headers: { "user-agent": "skytrace-trails (local dev; github.com/zot24/skytrace)" },
