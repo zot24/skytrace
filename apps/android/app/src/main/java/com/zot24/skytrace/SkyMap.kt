@@ -50,7 +50,7 @@ fun SkyMap(
 ) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    val mapView = remember { MapView(context) }
+    val mapView = remember { MapView(context).also { MapTouchRouter.view = it } }
     val holder = remember { MapHolder() }
     val onUserGestureState = rememberUpdatedState(onUserGesture)
     val geoExecutor = remember {
@@ -83,6 +83,7 @@ fun SkyMap(
             lifecycle.removeObserver(observer)
             mapView.onPause()
             mapView.onStop()
+            if (MapTouchRouter.view === mapView) MapTouchRouter.view = null
             mapView.onDestroy()
         }
     }
