@@ -134,6 +134,10 @@ fun SkyMap(
                     }
                 }
                 map.addOnCameraIdleListener {
+                    if (BuildConfig.DEBUG) {
+                        val c = map.cameraPosition
+                        Log.i("skytrace-cam", "idle zoom=%.2f bearing=%.1f tilt=%.1f".format(java.util.Locale.US, c.zoom, c.bearing, c.tilt))
+                    }
                     if (!holder.appliedOpening) return@addOnCameraIdleListener
                     val target = map.cameraPosition.target ?: return@addOnCameraIdleListener
                     vm.rememberView(
