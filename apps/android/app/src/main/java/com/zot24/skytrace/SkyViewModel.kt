@@ -387,6 +387,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
                 if (!cur.add(id)) cur.remove(id)
                 prefs[key] = cur
             }
+            WidgetSync.refresh(getApplication(), fleet.snapshotFor(favouriteAircraft.value + id, System.currentTimeMillis()))
         }
     }
 
