@@ -75,8 +75,16 @@ object SatellitePrefetch {
             override fun onCreate(offlineRegion: OfflineRegion) {
                 Log.i(TAG, "start z$low-z$high tiles~$count")
                 offlineRegion.setObserver(object : OfflineRegion.OfflineRegionObserver {
+                    private var lastLog = 0L
                     override fun onStatusChanged(status: OfflineRegionStatus) {
-                        if (!status.isComplete) return
+                        val now = SystemClock.elapsedRealtime()
+                        if (!status.isComplete) {
+                            if (now - lastLog > 2_000L) {
+                                lastLog = now
+                                Log.i(TAG, "progress ${status.completedResourceCount}/${status.requiredResourceCount} precise=${status.isRequiredResourceCountPrecise}")
+                            }
+                            return
+                        }
                         offlineRegion.setDownloadState(OfflineRegion.STATE_INACTIVE)
                         Log.i(TAG, "done z$low-z$high resources=${status.completedResourceCount} tiles=${status.completedTileCount} bytes=${status.completedResourceSize} ms=${SystemClock.elapsedRealtime() - started}")
                         done.add(bounds to top)
@@ -93,6 +101,14 @@ object SatellitePrefetch {
                     }
                 })
                 offlineRegion.setDownloadState(OfflineRegion.STATE_ACTIVE)
+                // Never let one stuck prefetch block the next.
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    if (busy) {
+                        Log.w(TAG, "gave up after 90 s")
+                        offlineRegion.setDownloadState(OfflineRegion.STATE_INACTIVE)
+                        busy = false
+                    }
+                }, 90_000L)
             }
             override fun onError(error: String) {
                 Log.w(TAG, "create failed $error")
