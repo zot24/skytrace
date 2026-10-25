@@ -126,6 +126,7 @@ fun SkyMap(
                 }
                 false
             }
+            warmIcons(mapView.context)
             mapView.getMapAsync { map ->
                 SatellitePrefetch.setUpCache(mapView.context)
                 holder.map = map
@@ -630,7 +631,13 @@ private fun iconScaleExpression(): Expression {
 }
 
 private const val SELECTED_AMBER = 0xFFFFB020.toInt()
-private val iconCache = HashMap<Silhouette, android.graphics.Bitmap>()
+private val iconCache = java.util.concurrent.ConcurrentHashMap<Silhouette, android.graphics.Bitmap>()
+
+/** Builds the icon SDFs off the main thread, so the first style load only has to add them. */
+private fun warmIcons(context: Context) {
+    val app = context.applicationContext
+    Thread({ for (kind in Silhouette.entries) iconCache.getOrPut(kind) { aircraftIcon(app, kind) } }, "skytrace-icons").start()
+}
 
 private fun scaledStop(zoom: Double, size: Double): Expression.Stop {
     return Expression.stop(zoom, Expression.product(Expression.literal(size), iconScaleExpression()))
