@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import java.text.NumberFormat
 import java.util.Locale
+import kotlinx.coroutines.delay
 
 private val Ink = Color(0xFF07090C)
 private val Paper = Color(0xFFE8EEF6)
@@ -82,6 +83,13 @@ fun SkyScreen(vm: SkyViewModel = viewModel()) {
     LaunchedEffect(vm, lifecycle) { vm.poll(lifecycle) }
     LaunchedEffect(vm.airportSheet?.icao, vm.detail?.hex) {
         if (vm.airportSheet != null || vm.detail != null) dismissSearch()
+    }
+    LaunchedEffect(query) {
+        vm.aircraftHit = null
+        if (lookupKind(query) != null) {
+            delay(800)
+            vm.searchAircraft(query)
+        }
     }
     val chips by vm.typeChips.collectAsState()
     val mapStyle by vm.mapStyle.collectAsState()
@@ -178,7 +186,7 @@ fun SkyScreen(vm: SkyViewModel = viewModel()) {
                         .padding(vertical = 4.dp),
                     decorationBox = { inner ->
                         if (query.isEmpty()) {
-                            Text("Search airport — name, IATA, ICAO", color = Muted, fontSize = 14.sp)
+                            Text("Search airport, flight, registration, hex", color = Muted, fontSize = 14.sp)
                         }
                         inner()
                     },
@@ -194,7 +202,8 @@ fun SkyScreen(vm: SkyViewModel = viewModel()) {
             }
             Spacer(Modifier.height(8.dp))
             TypeChips(vm, chips)
-            if (hits.isNotEmpty() || showFavs) {
+            val aircraftHit = vm.aircraftHit
+            if (hits.isNotEmpty() || showFavs || aircraftHit != null) {
                 Column(
                     Modifier
                         .padding(top = 6.dp)
@@ -206,6 +215,7 @@ fun SkyScreen(vm: SkyViewModel = viewModel()) {
                     if (showFavs) {
                         FavouriteBlock(vm, favAirports, favAircraft)
                     }
+                    aircraftHit?.let { hit -> AircraftHitRow(vm, hit, dismissSearch) }
                     hits.forEach { airport ->
                         AirportRow(airport, favAirports.contains(airport.icao), { vm.focusAirport(airport); dismissSearch() }) {
                             vm.toggleAirport(airport.icao)
@@ -247,25 +257,48 @@ fun SkyScreen(vm: SkyViewModel = viewModel()) {
 private fun FavouriteBlock(vm: SkyViewModel, airports: Set<String>, aircraft: Set<String>) {
     val airportHits = vm.airports.filter { airports.contains(it.icao) }.take(8)
     val now = System.currentTimeMillis()
-    val craftHits = aircraft.mapNotNull { hex -> vm.fleet.one(hex, now) }.take(8)
-    if (airportHits.isEmpty() && craftHits.isEmpty()) {
+    val seen by vm.lastSeen.collectAsState()
+    if (airportHits.isEmpty() && aircraft.isEmpty()) {
         Text("No favourites yet", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(14.dp))
         return
     }
-    craftHits.forEach { plane ->
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .clickable { vm.focusAircraft(plane.hex) }
-                .padding(horizontal = 14.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Text(plane.callsign.ifBlank { plane.hex.uppercase(Locale.US) }, color = Paper, fontSize = 13.sp)
-            Text("★", color = Gold, fontSize = 16.sp)
+    aircraft.sorted().take(8).forEach { hex ->
+        val plane = vm.fleet.one(hex, now)
+        val sighting = seen[hex]
+        when {
+            plane != null -> AircraftRow(plane.callsign.ifBlank { hex.uppercase(Locale.US) }, null) { vm.focusAircraft(hex) }
+            sighting != null -> AircraftRow(sighting.callsign.ifBlank { hex.uppercase(Locale.US) }, vm.lastSeenText(sighting, now)) { vm.showLastSeen(sighting) }
+            else -> AircraftRow(hex.uppercase(Locale.US), "not seen on this phone yet") {}
         }
     }
     airportHits.forEach { airport ->
         AirportRow(airport, favourite = true, onPick = { vm.focusAirport(airport) }) { vm.toggleAirport(airport.icao) }
+    }
+}
+
+@Composable
+private fun AircraftHitRow(vm: SkyViewModel, hit: AircraftHit, dismissSearch: () -> Unit) {
+    when (hit) {
+        is AircraftHit.Live -> AircraftRow(hit.title, "live now") { vm.focusAircraft(hit.hex); dismissSearch() }
+        is AircraftHit.LastSeen -> AircraftRow(
+            hit.sighting.callsign.ifBlank { hit.sighting.hex.uppercase(Locale.US) },
+            vm.lastSeenText(hit.sighting, System.currentTimeMillis()),
+        ) { vm.showLastSeen(hit.sighting); dismissSearch() }
+        is AircraftHit.Unknown -> AircraftRow(hit.query.uppercase(Locale.US), "not live right now, and this phone hasn't seen it") {}
+    }
+}
+
+@Composable
+private fun AircraftRow(title: String, line: String?, onPick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onPick).padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, color = Paper, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            line?.let { Text(it, color = Muted, fontSize = 12.sp) }
+        }
+        Text("✈", color = Gold, fontSize = 14.sp)
     }
 }
 
