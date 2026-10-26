@@ -29,7 +29,8 @@ import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.roundToInt
 
-const val DEFAULT_BASE = "http://10.0.2.2:8787"
+const val DEFAULT_BASE = "https://api.adsb.lol"
+const val USER_AGENT = "skytrace-android (github.com/zot24/skytrace)"
 
 private const val COUNT_TAG = "skytrace-count"
 
@@ -406,14 +407,11 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
         }
         val base = baseUrl
         val view = box
-        val url = if (view == null) {
-            base.trimEnd('/') + "/api/planes"
-        } else {
-            planesUrl(base, view.south, view.north, view.west, view.east)
-        }
+        val v = view ?: ViewBox(BUSY_OPENING.lat - 4.0, BUSY_OPENING.lat + 4.0, BUSY_OPENING.lon - 5.0, BUSY_OPENING.lon + 5.0)
+        val url = planesUrl(base, v.south, v.north, v.west, v.east)
         val fetched = withContext(Dispatchers.IO) {
             try {
-                val request = Request.Builder().url(url).header("Accept", "application/json").build()
+                val request = Request.Builder().url(url).header("Accept", "application/json").header("User-Agent", USER_AGENT).build()
                 http.newCall(request).execute().use { response ->
                     val text = response.body?.string().orEmpty()
                     response.code to parseFeed(text)
@@ -660,7 +658,6 @@ fun isParked(altFt: Double, gsKt: Double): Boolean = isOnGround(altFt, gsKt) || 
 fun feedCredit(source: String): String? {
     val base = source.removeSuffix(" · stale")
     return when {
-        base.contains("opensky", ignoreCase = true) -> "OpenSky"
         base.contains("adsb", ignoreCase = true) -> "adsb.lol"
         else -> null
     }

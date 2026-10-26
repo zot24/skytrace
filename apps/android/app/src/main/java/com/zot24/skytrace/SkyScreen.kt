@@ -330,7 +330,7 @@ private fun AboutSheet(baseUrl: String, onSave: (String) -> Unit, onClose: () ->
                 lineHeight = 18.sp,
             )
             Spacer(Modifier.height(12.dp))
-            Text("Worker URL", color = Muted, fontSize = 12.sp)
+            Text("Feed URL", color = Muted, fontSize = 12.sp)
             BasicTextField(
                 value = draft,
                 onValueChange = { draft = it },

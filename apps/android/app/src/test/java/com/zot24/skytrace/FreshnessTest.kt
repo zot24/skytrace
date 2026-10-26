@@ -21,9 +21,10 @@ class FreshnessTest {
 
         val stale = freshness(45_000L)!!
         assertFalse(stale.fresh)
-        assertEquals(0.65f, stale.opacity, 0.0001f)
+        assertEquals(0.325f, stale.opacity, 0.0001f)
 
-        assertEquals(STALE_OPACITY, freshness(DROP_MS - 1)!!.opacity, 0.001f)
+        assertEquals(FADED_FROM, freshness(FRESH_MS + 1)!!.opacity, 0.001f)
+        assertEquals(FADED_TO, freshness(DROP_MS - 1)!!.opacity, 0.001f)
         assertNull(freshness(DROP_MS))
     }
 

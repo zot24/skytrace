@@ -63,7 +63,7 @@ object WidgetSync {
         val fleet: List<VisiblePlane> = when {
             favAircraft.isEmpty() && favAirports.isEmpty() -> emptyList()
             planes != null -> planes
-            else -> backgroundRows(prefs[keyUrl], prefs[keyDebugSynthetic] ?: 0)
+            else -> backgroundRows(context, prefs[keyUrl], prefs[keyDebugSynthetic] ?: 0, favAirports)
         }
         val lines = ArrayList<String>()
         if (favAirports.isNotEmpty()) {
@@ -116,15 +116,19 @@ object WidgetSync {
         }
     }
 
-    private fun backgroundRows(base: String?, synthetic: Int): List<VisiblePlane> {
+    private fun backgroundRows(context: Context, base: String?, synthetic: Int, favAirports: Set<String>): List<VisiblePlane> {
         val rows: List<PlaneRow> = if (BuildConfig.DEBUG && synthetic > 0) {
             SyntheticTraffic.planes = synthetic
             SyntheticTraffic.rows(System.currentTimeMillis())
         } else {
             try {
-                val url = (base?.ifBlank { null } ?: DEFAULT_BASE).trimEnd('/') + "/api/planes"
+                val home = parseAirports(context.assets.open("airports.json").bufferedReader().use { it.readText() })
+                    .firstOrNull { it.icao in favAirports }
+                val lat = home?.lat ?: BUSY_OPENING.lat
+                val lon = home?.lon ?: BUSY_OPENING.lon
+                val url = planesUrl(base?.ifBlank { null } ?: DEFAULT_BASE, lat - 4.0, lat + 4.0, lon - 5.0, lon + 5.0)
                 val client = OkHttpClient.Builder().callTimeout(20, TimeUnit.SECONDS).build()
-                client.newCall(Request.Builder().url(url).build()).execute().use { response ->
+                client.newCall(Request.Builder().url(url).header("User-Agent", USER_AGENT).build()).execute().use { response ->
                     parseFeed(response.body?.string().orEmpty())?.rows.orEmpty()
                 }
             } catch (_: Exception) {

@@ -1,9 +1,8 @@
-/** The last field is when the position was fixed (epoch ms), so clients can age it after caching. */
-type Ac = [string, string, number, number, number, number, number, string, string, string, number];
+type Ac = [string, string, number, number, number, number, number, string, string, string];
 
 type Bbox = { south: number; north: number; west: number; east: number };
 
-type Snapshot = { src: 'adsb.lol' | 'opensky'; ac: Ac[]; at: number };
+type Snapshot = { src: 'adsb.lol'; ac: Ac[]; at: number };
 
 export interface Env {
   SKYTRACE_SIMULATE_429?: string;
@@ -101,17 +100,8 @@ export default {
         const retryAfterMs = scheduleBackoff('upstream 429');
         return respond(rememberTiles(), true, retryAfterMs, null);
       }
-      try {
-        const ac = await openSky(bbox);
-        lastGood = { src: 'opensky', ac, at: Date.now() };
-        failStreak = 0;
-        backoffUntil = 0;
-        return respond(lastGood, false, 0, cacheKey);
-      } catch (skyError) {
-        const reason = statusOf(skyError) === 429 ? 'upstream 429' : 'upstream failure';
-        const retryAfterMs = scheduleBackoff(reason);
-        return respond(rememberTiles(), true, retryAfterMs, null);
-      }
+      const retryAfterMs = scheduleBackoff('upstream failure');
+      return respond(rememberTiles(), true, retryAfterMs, null);
     }
   },
 };
@@ -163,7 +153,6 @@ function respond(snap: Snapshot | null, stale: boolean, retryAfterMs: number, ca
   const res = new Response(JSON.stringify({
     src,
     ts: snap?.at ?? Date.now(),
-    now: Date.now(),
     stale,
     retryAfterMs: stale ? retryAfterMs : 0,
     ac,
@@ -262,7 +251,7 @@ function fromAdsb(ac: AdsbAc): Ac | null {
     lon = num(ac.lastPosition.lon);
     seen = num(ac.lastPosition.seen_pos) ?? seen;
   }
-  if (lat == null || lon == null || seen > 60) return null;
+  if (lat == null || lon == null || seen > 30) return null;
   const track = Math.round(num(ac.track) ?? num(ac.true_heading) ?? 0);
   return [
     ac.hex.toLowerCase(),
@@ -275,49 +264,6 @@ function fromAdsb(ac: AdsbAc): Ac | null {
     (ac.t || '').trim(),
     (ac.r || '').trim(),
     (ac.category || '').trim(),
-    Math.round(Date.now() - seen * 1000),
-  ];
-}
-
-async function openSky(bbox: Bbox | null): Promise<Ac[]> {
-  const url = new URL('https://opensky-network.org/api/states/all');
-  if (bbox) {
-    url.searchParams.set('lamin', String(bbox.south));
-    url.searchParams.set('lamax', String(bbox.north));
-    url.searchParams.set('lomin', String(bbox.west));
-    url.searchParams.set('lomax', String(bbox.east));
-  }
-  const body = (await fetchJson(url.toString(), 12000)) as { states?: unknown[][] | null };
-  if (!body.states) throw new Error('opensky empty');
-  const rows: Ac[] = [];
-  for (const state of body.states) {
-    const row = fromOpenSky(state);
-    if (row) rows.push(row);
-  }
-  if (rows.length === 0) throw new Error('opensky empty');
-  return rows;
-}
-
-function fromOpenSky(state: unknown[]): Ac | null {
-  const icao = typeof state[0] === 'string' ? state[0].toLowerCase() : '';
-  const lon = num(state[5]);
-  const lat = num(state[6]);
-  if (!icao || lat == null || lon == null) return null;
-  const onGround = state[8] === true;
-  const altM = num(state[7]) ?? num(state[13]) ?? 0;
-  const track = Math.round(num(state[10]) ?? 0);
-  return [
-    icao,
-    typeof state[1] === 'string' ? state[1].trim() : '',
-    round4(lat),
-    round4(lon),
-    onGround ? 0 : Math.round(altM * 3.28084),
-    Math.round((num(state[9]) ?? 0) * 1.94384),
-    wrap360(track),
-    '',
-    '',
-    '',
-    (num(state[3]) ?? Date.now() / 1000) * 1000,
   ];
 }
 

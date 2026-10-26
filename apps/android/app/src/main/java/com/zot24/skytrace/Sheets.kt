@@ -267,7 +267,7 @@ fun Credits(style: MapStyle, feed: String?, onAbout: () -> Unit) {
             Spacer(Modifier.height(4.dp))
             val lines = listOf(
                 "Map: ${style.credit}" + if (style == MapStyle.SATELLITE) " · CC BY-NC-SA 4.0, non-commercial" else "",
-                "ADS-B: © adsb.lol contributors (ODbL), OpenSky Network (non-commercial fallback)",
+                "ADS-B: © adsb.lol contributors (ODbL)",
                 "Routes: VRS standing data (CC0)" + RouteSource.snapshotLabel.let { if (it.isBlank()) "" else ", snapshot $it" },
                 "Airports: OurAirports (public domain)",
                 "METAR: NOAA Aviation Weather Center (public domain)",
@@ -275,7 +275,7 @@ fun Credits(style: MapStyle, feed: String?, onAbout: () -> Unit) {
             )
             for (line in lines) Text(line, color = SheetPaper, fontSize = 12.sp, lineHeight = 17.sp, modifier = Modifier.padding(vertical = 3.dp))
             Spacer(Modifier.height(6.dp))
-            Text("About and worker URL", color = SheetGold, fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { open = false; onAbout() }.padding(vertical = 6.dp))
+            Text("About and feed URL", color = SheetGold, fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { open = false; onAbout() }.padding(vertical = 6.dp))
         }
     } else {
         val satellite = style == MapStyle.SATELLITE

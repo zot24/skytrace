@@ -15,7 +15,7 @@ cd apps/android
 
 The debug APK is `app/build/outputs/apk/debug/app-debug.apk`.
 
-Cleartext HTTP is allowed only for `10.0.2.2`, `localhost`, and `127.0.0.1`. The default worker URL is `http://10.0.2.2:8787`, which is the host machine from an Android emulator. Tap the credit line to open About and change that URL. From the repo root, `npm run dev` serves the worker on port 8787.
+The app talks to adsb.lol directly (`https://api.adsb.lol/v2/point/{lat}/{lon}/{nm}` around the view, about every 5 s, backing off on errors). It does not use the worker. Tap the credit line to open About and change the feed URL. Cleartext HTTP is allowed only for `10.0.2.2`, `localhost`, and `127.0.0.1`.
 
 Airport search reads `public/airports.json`. The Gradle build copies that file into the app assets.
 
@@ -25,7 +25,7 @@ Favourites for airports and aircraft stay on the device in DataStore. There is n
 
 Aircraft icons based on Pinhead by Quincy Morgan (CC0 1.0), https://github.com/waysidemapping/pinhead
 
-A known ICAO type code picks the silhouette. A missing or unknown type uses the ADS-B emitter category. The worker appends that category as the 10th field of each aircraft row when adsb.lol sends `category`. OpenSky rows leave the field empty. A known type wins over the category.
+A known ICAO type code picks the silhouette. A missing or unknown type uses the ADS-B emitter category. The category comes from adsb.lol's `category` field. A known type wins over the category.
 
 | Input | Silhouette |
 | --- | --- |

@@ -37,7 +37,7 @@ class MotionTest {
         assertEquals(0.05, at30.lon, 1e-9)
 
         val at45 = fleet.one("abc123", 45_000L)!!
-        assertEquals(0.65f, at45.opacity, 0.0001f)
+        assertEquals(0.325f, at45.opacity, 0.0001f)
         assertEquals(0.075, at45.lon, 1e-9)
         assertTrue(at45.lon > at30.lon)
 
