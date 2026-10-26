@@ -9,6 +9,7 @@ import android.view.MotionEvent
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
@@ -25,6 +26,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
+import org.maplibre.android.geometry.LatLngBounds
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
@@ -112,6 +114,17 @@ fun SkyMap(
         }
     }
 
+    LaunchedEffect(mapView) {
+        snapshotFlow { vm.mapInsets }.collect { holder.map?.let { map -> padTo(map, it) } }
+    }
+
+    LaunchedEffect(mapView) {
+        snapshotFlow { vm.selected to vm.detailExpanded }.collect { (hex, _) ->
+            val map = holder.map
+            if (hex != null && map != null && vm.followHex == null) fitPlaneAndTrail(map, vm, hex, 48 * context.resources.displayMetrics.density)
+        }
+    }
+
     AndroidView(
         modifier = modifier,
         factory = {
@@ -130,6 +143,7 @@ fun SkyMap(
             mapView.getMapAsync { map ->
                 SatellitePrefetch.setUpCache(mapView.context)
                 holder.map = map
+                padTo(map, vm.mapInsets)
                 map.addOnCameraMoveStartedListener { reason ->
                     if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) {
                         holder.userMoved = true
@@ -331,6 +345,23 @@ fun SkyMap(
             mapView
         },
     )
+}
+
+private fun padTo(map: MapLibreMap, insets: MapInsets) {
+    map.moveCamera(CameraUpdateFactory.paddingTo(0.0, insets.top.toDouble(), 0.0, insets.bottom.toDouble()))
+}
+
+/** Pans so the plane and its trail sit in the uncovered part of the map, zooming out only if they would not fit. */
+private fun fitPlaneAndTrail(map: MapLibreMap, vm: SkyViewModel, hex: String, marginPx: Float) {
+    val now = System.currentTimeMillis()
+    val plane = vm.fleet.one(hex, now) ?: return
+    val points = vm.fleet.trailSegments(hex, now).flatten().map { LatLng(it.lat, it.lon) } + LatLng(plane.lat, plane.lon)
+    val bounds = LatLngBounds.Builder().includes(points + LatLng(plane.lat + 1e-4, plane.lon + 1e-4)).build()
+    val m = marginPx.toInt()
+    val insets = vm.mapInsets
+    val fit = map.getCameraForLatLngBounds(bounds, intArrayOf(m, insets.top + m, m, insets.bottom + m)) ?: return
+    val zoom = minOf(fit.zoom, map.cameraPosition.zoom)
+    map.easeCamera(CameraUpdateFactory.newLatLngZoom(bounds.center, zoom), 700)
 }
 
 private class MapHolder {
