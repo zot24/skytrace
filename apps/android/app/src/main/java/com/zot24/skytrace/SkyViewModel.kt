@@ -135,7 +135,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
                     applyPrefs(next[keyUrl], next[keyAircraft], next[keyAirports])
                 }
             }
-            pollLoop()
+            prefsLoaded.complete(Unit)
         }
         viewModelScope.launch(Dispatchers.IO) {
             val text = getApplication<Application>().assets.open("airports.json").bufferedReader().use { it.readText() }
@@ -386,11 +386,12 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
         favouriteAirports.value = airports ?: emptySet()
     }
 
-    private suspend fun pollLoop() {
-        while (viewModelScope.isActive) {
-            val wait = fetchOnce()
-            delay(wait)
-        }
+    private val prefsLoaded = kotlinx.coroutines.CompletableDeferred<Unit>()
+
+    /** Called from the screen, so planes are fetched only while it is visible. */
+    suspend fun poll(lifecycle: androidx.lifecycle.Lifecycle) {
+        prefsLoaded.await()
+        pollWhileStarted(lifecycle) { fetchOnce() }
     }
 
     private suspend fun fetchOnce(): Long {
