@@ -5,8 +5,6 @@ import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.sin
 
-const val COAST_MS = 60_000L
-const val FADE_MS = 10_000L
 const val EASE_MS = 1_000L
 
 data class PlaneRow(
@@ -20,6 +18,8 @@ data class PlaneRow(
     val typeCode: String,
     val reg: String,
     val category: String,
+    /** When the feed fixed this position, epoch ms; 0 means "as of this poll". */
+    val fixAtMs: Long = 0L,
 )
 
 data class TrailPoint(val lon: Double, val lat: Double, val altFt: Double)
@@ -96,9 +96,9 @@ class Fleet {
                     category = row.category.ifBlank { existing.row.category },
                 )
                 craft[row.hex] = if (pose == null) {
-                    Craft(merged, now, row.lat, row.lon, row.trackDeg, Long.MIN_VALUE)
+                    Craft(merged, fixOf(row, now), row.lat, row.lon, row.trackDeg, Long.MIN_VALUE)
                 } else {
-                    Craft(merged, now, pose.lat, pose.lon, pose.trackDeg, now)
+                    Craft(merged, fixOf(row, now), pose.lat, pose.lon, pose.trackDeg, now)
                 }
             }
         }
@@ -121,6 +121,13 @@ class Fleet {
     fun tracked(now: Long): Int {
         prune(now)
         return craft.size
+    }
+
+    fun freshness(hex: String, now: Long): Freshness? = craft[hex]?.let { freshness(now - it.fixAtMs) }
+
+    fun freshCount(now: Long): Int {
+        prune(now)
+        return craft.values.count { now - it.fixAtMs <= FRESH_MS }
     }
 
     fun visible(
@@ -156,7 +163,7 @@ class Fleet {
     private fun prune(now: Long) {
         deadScratch.clear()
         for ((hex, item) in craft) {
-            if (now - item.fixAtMs >= COAST_MS + FADE_MS) deadScratch.add(hex)
+            if (freshness(now - item.fixAtMs) == null) deadScratch.add(hex)
         }
         for (index in deadScratch.indices) {
             val hex = deadScratch[index]
@@ -199,18 +206,12 @@ class Fleet {
 
     private fun putNew(row: PlaneRow, now: Long) {
         if (row.hex.isEmpty()) return
-        craft[row.hex] = Craft(row, now, row.lat, row.lon, row.trackDeg, Long.MIN_VALUE)
+        craft[row.hex] = Craft(row, fixOf(row, now), row.lat, row.lon, row.trackDeg, Long.MIN_VALUE)
     }
 }
 
 private fun pose(item: Craft, now: Long): VisiblePlane? {
-    val age = now - item.fixAtMs
-    if (age >= COAST_MS + FADE_MS) return null
-    val opacity = if (age <= COAST_MS) {
-        1f
-    } else {
-        (1f - (age - COAST_MS).toFloat() / FADE_MS.toFloat()).coerceIn(0f, 1f)
-    }
+    val opacity = freshness(now - item.fixAtMs)?.opacity ?: return null
     val dt = (now - item.fixAtMs) / 1000.0
     val projected = project(item.row.lat, item.row.lon, item.row.gsKt, item.row.trackDeg, dt)
     val easing = item.anchorAtMs >= 0 && now < item.anchorAtMs + EASE_MS
@@ -289,7 +290,7 @@ internal fun merge(base: Map<String, Craft>, rows: List<PlaneRow>, now: Long): L
         if (row.hex.isEmpty()) continue
         val existing = base[row.hex]
         if (existing == null) {
-            next[row.hex] = Craft(row, now, row.lat, row.lon, row.trackDeg, Long.MIN_VALUE)
+            next[row.hex] = Craft(row, fixOf(row, now), row.lat, row.lon, row.trackDeg, Long.MIN_VALUE)
             continue
         }
         val pose = pose(existing, now)
@@ -305,10 +306,13 @@ internal fun merge(base: Map<String, Craft>, rows: List<PlaneRow>, now: Long): L
             category = row.category.ifBlank { existing.row.category },
         )
         next[row.hex] = if (pose == null) {
-            Craft(merged, now, row.lat, row.lon, row.trackDeg, Long.MIN_VALUE)
+            Craft(merged, fixOf(row, now), row.lat, row.lon, row.trackDeg, Long.MIN_VALUE)
         } else {
-            Craft(merged, now, pose.lat, pose.lon, pose.trackDeg, now)
+            Craft(merged, fixOf(row, now), pose.lat, pose.lon, pose.trackDeg, now)
         }
     }
     return next
 }
+
+/** The feed's own fix time when it gave one, never later than now. */
+private fun fixOf(row: PlaneRow, now: Long): Long = if (row.fixAtMs in 1..now) row.fixAtMs else now

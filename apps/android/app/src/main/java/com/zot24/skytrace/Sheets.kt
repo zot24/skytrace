@@ -108,6 +108,7 @@ fun FlightSheet(vm: SkyViewModel, detail: PlaneDetail, favourite: Boolean) {
             Text(route.credit.line, color = SheetMuted, fontSize = 10.sp, modifier = Modifier.padding(bottom = 4.dp))
         }
         SheetFact("Status", if (detail.onGround) "On ground" else "Flying")
+        if (detail.seen.isNotEmpty()) SheetFact("Position", detail.seen)
         SheetFact("Type", detail.type)
         SheetFact("Registration", detail.reg)
         if (!detail.onGround) SheetFact("Altitude", detail.altitude)

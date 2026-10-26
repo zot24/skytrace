@@ -48,6 +48,7 @@ data class PlaneDetail(
     val onGround: Boolean,
     val speed: String,
     val heading: String,
+    val seen: String,
 )
 
 data class FramePicture(
@@ -320,7 +321,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun maintainSelection(now: Long) {
-        count = fleet.tracked(now)
+        count = fleet.freshCount(now)
         val hex = selected ?: return
         val plane = fleet.one(hex, now)
         if (plane == null) {
@@ -398,7 +399,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
             acceptFresh(rows, now)
             applyPendingLink()
             source = "synthetic"
-            count = fleet.tracked(now)
+            count = fleet.freshCount(now)
             refreshDetail(now)
             logCount(rows.size, false)
             return 5_000L
@@ -441,7 +442,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
             applyPendingLink()
             attempt = 0
             source = body.src.ifBlank { "adsb.lol" }
-            count = fleet.tracked(now)
+            count = fleet.freshCount(now)
             refreshDetail(now)
             logCount(body.rows.size, false)
             return nextPollDelay(true, 0, 0L)
@@ -484,7 +485,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
         } else {
             "feed unavailable"
         }
-        count = fleet.tracked(now)
+        count = fleet.freshCount(now)
         refreshDetail(now)
     }
 
@@ -531,6 +532,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
             onGround = isOnGround(plane.altFt, plane.gsKt),
             speed = "${numbers.format(plane.gsKt.roundToInt())} kt",
             heading = "%03d°".format(Locale.US, heading.roundToInt() % 360),
+            seen = fleet.freshness(plane.hex, System.currentTimeMillis())?.let { seenLabel(it) }.orEmpty(),
         )
     }
 

@@ -9,7 +9,7 @@ data class FeedBody(
     val rows: List<PlaneRow>,
 )
 
-fun parseFeed(json: String): FeedBody? {
+fun parseFeed(json: String, receivedAt: Long = System.currentTimeMillis()): FeedBody? {
     val body = try {
         JSONObject(json)
     } catch (_: Exception) {
@@ -17,6 +17,8 @@ fun parseFeed(json: String): FeedBody? {
     }
     val rowsJson = body.optJSONArray("ac")
     val rows = ArrayList<PlaneRow>(rowsJson?.length() ?: 0)
+    // Fix times are on the server's clock; shift them onto ours with the server's "now".
+    val skew = body.optLong("now", 0L).let { if (it > 0L) receivedAt - it else 0L }
     if (rowsJson != null) {
         for (i in 0 until rowsJson.length()) {
             val row = rowsJson.optJSONArray(i) ?: continue
@@ -35,6 +37,7 @@ fun parseFeed(json: String): FeedBody? {
                     typeCode = row.optString(7).trim(),
                     reg = row.optString(8).trim(),
                     category = if (row.length() > 9) row.optString(9).trim() else "",
+                    fixAtMs = if (row.length() > 10) row.optLong(10, 0L).let { if (it > 0L) it + skew else 0L } else 0L,
                 ),
             )
         }

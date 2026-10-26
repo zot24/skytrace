@@ -1,4 +1,5 @@
-type Ac = [string, string, number, number, number, number, number, string, string, string];
+/** The last field is when the position was fixed (epoch ms), so clients can age it after caching. */
+type Ac = [string, string, number, number, number, number, number, string, string, string, number];
 
 type Bbox = { south: number; north: number; west: number; east: number };
 
@@ -162,6 +163,7 @@ function respond(snap: Snapshot | null, stale: boolean, retryAfterMs: number, ca
   const res = new Response(JSON.stringify({
     src,
     ts: snap?.at ?? Date.now(),
+    now: Date.now(),
     stale,
     retryAfterMs: stale ? retryAfterMs : 0,
     ac,
@@ -260,7 +262,7 @@ function fromAdsb(ac: AdsbAc): Ac | null {
     lon = num(ac.lastPosition.lon);
     seen = num(ac.lastPosition.seen_pos) ?? seen;
   }
-  if (lat == null || lon == null || seen > 30) return null;
+  if (lat == null || lon == null || seen > 60) return null;
   const track = Math.round(num(ac.track) ?? num(ac.true_heading) ?? 0);
   return [
     ac.hex.toLowerCase(),
@@ -273,6 +275,7 @@ function fromAdsb(ac: AdsbAc): Ac | null {
     (ac.t || '').trim(),
     (ac.r || '').trim(),
     (ac.category || '').trim(),
+    Math.round(Date.now() - seen * 1000),
   ];
 }
 
@@ -314,6 +317,7 @@ function fromOpenSky(state: unknown[]): Ac | null {
     '',
     '',
     '',
+    (num(state[3]) ?? Date.now() / 1000) * 1000,
   ];
 }
 
