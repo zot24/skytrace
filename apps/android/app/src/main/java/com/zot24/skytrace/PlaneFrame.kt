@@ -124,13 +124,13 @@ fun planesInHitBox(
     return hits
 }
 
-fun trailSignature(trails: List<List<Pair<Double, Double>>>): Int {
+fun trailSignature(trails: List<List<TrailPoint>>): Int {
     var signature = trails.size
     for (segment in trails) {
         signature = signature * 31 + segment.size
         val tip = segment.lastOrNull() ?: continue
-        signature = signature * 31 + tip.first.hashCode()
-        signature = signature * 31 + tip.second.hashCode()
+        signature = signature * 31 + tip.lon.hashCode()
+        signature = signature * 31 + tip.lat.hashCode()
     }
     return signature
 }
@@ -169,25 +169,23 @@ fun appendPlaneJson(out: StringBuilder, planes: List<VisiblePlane>, selected: St
     out.append("]}")
 }
 
-fun appendTrailJson(out: StringBuilder, trails: List<List<Pair<Double, Double>>>) {
+/** One two-point line per step, each carrying its mean altitude, so the layer colours the trail by height. */
+fun appendTrailJson(out: StringBuilder, trails: List<List<TrailPoint>>) {
     out.setLength(0)
     out.append("{\"type\":\"FeatureCollection\",\"features\":[")
     var written = 0
     for (segment in trails) {
-        if (segment.size < 2) continue
-        if (written > 0) out.append(',')
-        written += 1
-        out.append("{\"type\":\"Feature\",\"geometry\":{\"type\":\"LineString\",\"coordinates\":[")
-        for (p in segment.indices) {
-            if (p > 0) out.append(',')
-            val point = segment[p]
-            out.append('[')
-            out.append(point.first)
-            out.append(',')
-            out.append(point.second)
-            out.append(']')
+        for (i in 1 until segment.size) {
+            val a = segment[i - 1]
+            val b = segment[i]
+            if (written > 0) out.append(',')
+            written += 1
+            out.append("{\"type\":\"Feature\",\"properties\":{\"alt\":")
+            out.append(((a.altFt + b.altFt) / 2).toInt())
+            out.append("},\"geometry\":{\"type\":\"LineString\",\"coordinates\":[[")
+            out.append(a.lon).append(',').append(a.lat).append("],[")
+            out.append(b.lon).append(',').append(b.lat).append("]]}}")
         }
-        out.append("]}}")
     }
     out.append("]}")
 }

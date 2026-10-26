@@ -50,8 +50,9 @@ object SyntheticTraffic {
     /** Ground, departing and arriving traffic at JFK, on a ten-minute loop, for the airport sheet. */
     private fun airportTraffic(now: Long): List<PlaneRow> {
         if (planes <= 0) return emptyList()
-        val t = ((now - epoch) % 600_000L) / 1000.0
         return List(24) { i ->
+            // Each plane runs the loop from its own offset, so departures and arrivals spread out instead of moving in lockstep.
+            val t = ((now - epoch + i * 75_000L) % 600_000L) / 1000.0
             val r = Random(10_000 + i)
             val phase = i % 3
             // Airborne JFK traffic uses real airline callsigns found in the bundled VRS routes, pointed the right way,

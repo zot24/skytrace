@@ -265,7 +265,7 @@ fun Credits(style: MapStyle, feed: String?, onAbout: () -> Unit) {
             SheetTitle("Credits", null, {}, { open = false })
             Spacer(Modifier.height(4.dp))
             val lines = listOf(
-                "Map: ${style.credit}",
+                "Map: ${style.credit}" + if (style == MapStyle.SATELLITE) " · CC BY-NC-SA 4.0, non-commercial" else "",
                 "ADS-B: © adsb.lol contributors (ODbL), OpenSky Network (non-commercial fallback)",
                 "Routes: VRS standing data (CC0)" + RouteSource.snapshotLabel.let { if (it.isBlank()) "" else ", snapshot $it" },
                 "Airports: OurAirports (public domain)",

@@ -52,7 +52,7 @@ data class PlaneDetail(
 
 data class FramePicture(
     val planes: List<VisiblePlane>,
-    val trails: List<List<Pair<Double, Double>>>,
+    val trails: List<List<TrailPoint>>,
     val total: Int,
     val inView: Int = planes.size,
     val pinsInView: Int = 0,
@@ -349,7 +349,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
         } else {
             val plane = fleet.one(hex, now)
             if (plane != null && now - lastTrail >= 1_000L) {
-                fleet.noteTrail(hex, plane.lon, plane.lat, now)
+                fleet.noteTrail(hex, plane.lon, plane.lat, plane.altFt, now)
                 lastTrail = now
             }
             fleet.trailSegments(hex, now)

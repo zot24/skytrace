@@ -554,7 +554,7 @@ private fun install(style: Style, airports: List<Airport>, context: Context): Pl
     )
     labels.minZoom = 6f
 
-    fun line(id: String, color: String, opacity: Float, blur: Float, vararg stops: Expression.Stop): LineLayer {
+    fun line(id: String, color: Expression, opacity: Float, blur: Float, vararg stops: Expression.Stop): LineLayer {
         return LineLayer(id, "trail").withProperties(
             PropertyFactory.lineColor(color),
             PropertyFactory.lineOpacity(opacity),
@@ -579,14 +579,7 @@ private fun install(style: Style, airports: List<Airport>, context: Context): Pl
             Expression.switchCase(
                 Expression.eq(Expression.get("sel"), true),
                 Expression.color(SELECTED_AMBER),
-                Expression.interpolate(
-                    Expression.linear(),
-                    Expression.get("alt"),
-                    Expression.stop(0, Expression.color(0xFF7CF29A.toInt())),
-                    Expression.stop(10_000, Expression.color(0xFF35D6F0.toInt())),
-                    Expression.stop(25_000, Expression.color(0xFF6FA8FF.toInt())),
-                    Expression.stop(40_000, Expression.color(0xFFD08CFF.toInt())),
-                ),
+                altitudeColor(),
             ),
         ),
         PropertyFactory.iconHaloColor("rgba(4,6,10,0.9)"),
@@ -606,9 +599,9 @@ private fun install(style: Style, airports: List<Airport>, context: Context): Pl
     style.addLayer(large)
     style.addLayer(medium)
     style.addLayer(labels)
-    style.addLayer(line("trail-glow", "#ffb020", 0.35f, 1.5f, Expression.stop(1, 10), Expression.stop(6, 14), Expression.stop(10, 18), Expression.stop(14, 24)))
-    style.addLayer(line("trail-casing", "#1a1004", 0.95f, 0f, Expression.stop(1, 6), Expression.stop(6, 8), Expression.stop(10, 11), Expression.stop(14, 15)))
-    style.addLayer(line("trail-core", "#ffc14a", 1f, 0f, Expression.stop(1, 3), Expression.stop(6, 4), Expression.stop(10, 5.5), Expression.stop(14, 7.5)))
+    style.addLayer(line("trail-glow", altitudeColor(), 0.35f, 1.5f, Expression.stop(1, 10), Expression.stop(6, 14), Expression.stop(10, 18), Expression.stop(14, 24)))
+    style.addLayer(line("trail-casing", Expression.color(0xFF1A1004.toInt()), 0.95f, 0f, Expression.stop(1, 6), Expression.stop(6, 8), Expression.stop(10, 11), Expression.stop(14, 15)))
+    style.addLayer(line("trail-core", altitudeColor(), 1f, 0f, Expression.stop(1, 3), Expression.stop(6, 4), Expression.stop(10, 5.5), Expression.stop(14, 7.5)))
     style.addLayer(planes)
     return PlaneSymbols(planes)
 }
@@ -629,6 +622,16 @@ private fun iconScaleExpression(): Expression {
     }
     return Expression.match(Expression.get("icon"), Expression.literal(1.0), *stops.toTypedArray())
 }
+
+/** Green near the ground, through cyan and blue, to violet at cruise. Planes and trails share it. */
+private fun altitudeColor(): Expression = Expression.interpolate(
+    Expression.linear(),
+    Expression.get("alt"),
+    Expression.stop(0, Expression.color(0xFF7CF29A.toInt())),
+    Expression.stop(10_000, Expression.color(0xFF35D6F0.toInt())),
+    Expression.stop(25_000, Expression.color(0xFF6FA8FF.toInt())),
+    Expression.stop(40_000, Expression.color(0xFFD08CFF.toInt())),
+)
 
 private const val SELECTED_AMBER = 0xFFFFB020.toInt()
 private val iconCache = java.util.concurrent.ConcurrentHashMap<Silhouette, android.graphics.Bitmap>()

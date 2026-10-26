@@ -1,7 +1,7 @@
 {"version":8,
 "glyphs":"https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf",
 "sources":{
-"eox":{"type":"raster","tileSize":256,"minzoom":0,"maxzoom":14,"tiles":["https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2025_3857/default/GoogleMapsCompatible/{z}/{y}/{x}.jpg"]}},
+"eox":{"type":"raster","attribution":"<a href=\"https://s2maps.eu\">EOxCloudless</a> https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2025), CC BY-NC-SA 4.0","tileSize":256,"minzoom":0,"maxzoom":14,"tiles":["https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2025_3857/default/GoogleMapsCompatible/{z}/{y}/{x}.jpg"]}},
 "layers":[
 {"id":"bg","type":"background","paint":{"background-color":"#05070a"}},
 {"id":"eox","type":"raster","source":"eox"}]}
