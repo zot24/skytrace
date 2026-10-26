@@ -118,13 +118,6 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
                 getApplication<Application>().skyStore.edit { it[keyDebugSynthetic] = SyntheticTraffic.planes }
             }
             WidgetSync.schedule(getApplication())
-            launch {
-                while (isActive) {
-                    delay(5_000L)
-                    WidgetSync.refresh(getApplication(), fleet.snapshotFor(fleet.snapshot().keys, System.currentTimeMillis()))
-                    delay(115_000L)
-                }
-            }
             val saved = parseCamera(SyntheticTraffic.camera.takeIf { BuildConfig.DEBUG } ?: prefs[keyCamera])
             val cam = saved ?: BUSY_OPENING
             lastSavedCamera = if (saved != null) formatCamera(cam) else null
@@ -388,10 +381,17 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
 
     private val prefsLoaded = kotlinx.coroutines.CompletableDeferred<Unit>()
 
-    /** Called from the screen, so planes are fetched only while it is visible. */
-    suspend fun poll(lifecycle: androidx.lifecycle.Lifecycle) {
+    /** Called from the screen, so planes and the in-app widget refresh run only while it is visible. */
+    suspend fun poll(lifecycle: androidx.lifecycle.Lifecycle) = kotlinx.coroutines.coroutineScope {
         prefsLoaded.await()
-        pollWhileStarted(lifecycle) { fetchOnce() }
+        launch { pollWhileStarted(lifecycle) { fetchOnce() } }
+        launch {
+            pollWhileStarted(lifecycle) {
+                delay(5_000L)
+                WidgetSync.refresh(getApplication(), fleet.snapshotFor(fleet.snapshot().keys, System.currentTimeMillis()))
+                115_000L
+            }
+        }
     }
 
     private suspend fun fetchOnce(): Long {

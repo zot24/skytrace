@@ -49,4 +49,28 @@ class PollingTest {
         assertEquals(617_000L, fetchedAt.last())
         job.cancel()
     }
+
+    @Test
+    fun aSlowLoopIsCancelledMidWaitAndRestartsOnReturn() = runTest(dispatcher) {
+        val owner = object : LifecycleOwner {
+            val registry = LifecycleRegistry.createUnsafe(this)
+            override val lifecycle: Lifecycle get() = registry
+        }
+        val refreshedAt = ArrayList<Long>()
+        val job = launch {
+            pollWhileStarted(owner.lifecycle) { kotlinx.coroutines.delay(5_000L); refreshedAt += testScheduler.currentTime; 115_000L }
+        }
+        owner.registry.currentState = Lifecycle.State.STARTED
+        advanceTimeBy(130_000L); runCurrent()
+        assertEquals(listOf(5_000L, 125_000L), refreshedAt)
+
+        owner.registry.currentState = Lifecycle.State.CREATED
+        advanceTimeBy(1_000_000L); runCurrent()
+        assertEquals(2, refreshedAt.size)
+
+        owner.registry.currentState = Lifecycle.State.STARTED
+        advanceTimeBy(5_000L); runCurrent()
+        assertEquals(1_135_000L, refreshedAt.last())
+        job.cancel()
+    }
 }
