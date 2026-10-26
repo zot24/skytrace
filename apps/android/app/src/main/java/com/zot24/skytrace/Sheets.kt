@@ -309,11 +309,8 @@ fun Credits(style: MapStyle, feed: String?, onAbout: () -> Unit) {
 
 @Composable
 private fun WeatherBlock(raw: String?) {
-    val weather = raw?.let { decodeMetar(it) }
-    if (raw == null) {
-        Text("Loading weather…", color = SheetMuted, fontSize = 13.sp)
-        return
-    }
+    if (raw == null) return
+    val weather = decodeMetar(raw)
     if (weather == null) {
         Text(raw, color = SheetMuted, fontSize = 12.sp)
         return

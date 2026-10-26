@@ -1,6 +1,7 @@
 package com.zot24.skytrace
 
 const val PLANE_CULL_ZOOM = 8.0
+const val GROUND_ZOOM = 11.0
 const val LOW_ZOOM_PUSH_MS = 200L
 const val HIGH_ZOOM_PUSH_MS = 50L
 const val PLANE_LAYER_ID = "plane-symbols"

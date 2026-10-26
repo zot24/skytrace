@@ -70,7 +70,7 @@ object WidgetSync {
             val airports = parseAirports(context.assets.open("airports.json").bufferedReader().use { it.readText() })
             for (airport in airports.filter { it.icao in favAirports }.take(3)) {
                 val weather = metar(airport.icao)?.let { decodeMetar(it) }
-                val first = if (weather == null) "Weather unavailable" else {
+                val first = if (weather == null) "" else {
                     listOfNotNull(weather.temperatureC?.let { "$it°C" }, "wind ${weather.wind}").joinToString(" · ")
                 }
                 val near = fleet.filter { kotlin.math.abs(it.lat - airport.lat) < 0.8 && kotlin.math.abs(it.lon - airport.lon) < 1.1 }

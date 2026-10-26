@@ -292,9 +292,10 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
                     ""
                 }
             }
-            val shown = text.ifBlank { "No METAR available" }
-            if (text.isNotBlank()) metarCache[icao] = now to shown
-            if (airportSheet?.icao == icao) metar = shown
+            if (text.isNotBlank()) {
+                metarCache[icao] = now to text
+                if (airportSheet?.icao == icao) metar = text
+            }
         }
     }
 
@@ -343,7 +344,9 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
         val chips = typeChips.value
         val kept = if (chips.isEmpty()) inView else inView.filter { it.hex in pins || keepsPlane(chips, it.silhouette, it.hex in favourites) }
         // Thinning only below zoom 8, and never over a pinned plane, so it cannot hide what the user is looking for.
-        val planes = if (zoom < PLANE_CULL_ZOOM) thin(kept, padded, pins) else kept
+        // Parked and pattern traffic sits under the airport marker until zoomed in; the airport sheet still counts it.
+        val flying = if (zoom < GROUND_ZOOM) kept.filter { it.hex in pins || !isParked(it.altFt, it.gsKt) } else kept
+        val planes = if (zoom < PLANE_CULL_ZOOM) thin(flying, padded, pins) else flying
         val trails = if (hex == null) {
             emptyList()
         } else {
@@ -648,6 +651,8 @@ fun classifyTraffic(airport: Airport, near: List<VisiblePlane>): AirportTraffic 
 
 
 fun isOnGround(altFt: Double, gsKt: Double): Boolean = altFt < 50 || (altFt < 300 && gsKt < 50)
+
+fun isParked(altFt: Double, gsKt: Double): Boolean = isOnGround(altFt, gsKt) || (altFt < 1_000 && gsKt <= 160)
 
 /** Credit only the feed whose planes are on screen: none for synthetic traffic or before any data. */
 fun feedCredit(source: String): String? {
