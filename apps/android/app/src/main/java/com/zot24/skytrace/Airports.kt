@@ -1,6 +1,7 @@
 package com.zot24.skytrace
 
 import org.json.JSONArray
+import kotlin.math.floor
 
 data class Airport(
     val icao: String,
@@ -30,6 +31,27 @@ fun parseAirports(json: String): List<Airport> {
         )
     }
     return out
+}
+
+/** Airports bucketed by whole degree, so a proximity check reads a few cells instead of every airport. */
+class AirportGrid(airports: List<Airport>) {
+    private val cells = airports.groupBy { cell(it.lat, it.lon) }
+
+    fun near(lat: Double, lon: Double, nm: Double): Boolean {
+        val lat0 = floor(lat).toInt()
+        val lon0 = floor(lon).toInt()
+        for (dLat in -1..1) for (dLon in -1..1) {
+            val bucket = cells[key(lat0 + dLat, wrapDegree(lon0 + dLon))] ?: continue
+            if (bucket.any { distanceNm(lat, lon, it.lat, it.lon) <= nm }) return true
+        }
+        return false
+    }
+
+    private fun cell(lat: Double, lon: Double) = key(floor(lat).toInt(), floor(lon).toInt())
+
+    private fun key(lat: Int, lon: Int) = lat * 1000 + lon
+
+    private fun wrapDegree(lon: Int) = if (lon >= 180) lon - 360 else if (lon < -180) lon + 360 else lon
 }
 
 fun searchAirports(airports: List<Airport>, query: String): List<Airport> {

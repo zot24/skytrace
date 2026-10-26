@@ -78,6 +78,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
     var routeLookedUp by mutableStateOf(false)
     private var routeCallsign: String? = null
     private var routeResult: RouteResult? = null
+    private var airportGrid = AirportGrid(emptyList())
     private val airportsByIcao by lazy { airports.associateBy { it.icao } }
     var baseUrl by mutableStateOf(DEFAULT_BASE)
     var planeSymbols: PlaneSymbols? = null
@@ -143,9 +144,11 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) {
             val text = getApplication<Application>().assets.open("airports.json").bufferedReader().use { it.readText() }
             val parsed = parseAirports(text)
+            val grid = AirportGrid(parsed)
             runCatching { RouteSource.init(getApplication()) }.onFailure { android.util.Log.w("skytrace-route", "vrs init failed", it) }
             withContext(Dispatchers.Main) {
                 airports = parsed
+                airportGrid = grid
                 applyPendingLink()
             }
         }
@@ -351,10 +354,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
         val inView = fleet.visible(now, padded.south, padded.north, padded.west, padded.east, hex ?: followHex)
         val chips = typeChips.value
         val kept = if (chips.isEmpty()) inView else inView.filter { it.hex in pins || keepsPlane(chips, it.silhouette, it.hex in favourites) }
-        // Thinning only below zoom 8, and never over a pinned plane, so it cannot hide what the user is looking for.
-        // Parked and pattern traffic sits under the airport marker until zoomed in; the airport sheet still counts it.
-        val flying = if (zoom < GROUND_ZOOM) kept.filter { it.hex in pins || !isParked(it.altFt, it.gsKt) } else kept
-        val planes = if (zoom < PLANE_CULL_ZOOM) thin(flying, padded, pins) else flying
+        val planes = declutter(kept, padded, zoom, pins, airportGrid)
         val trails = if (hex == null) {
             emptyList()
         } else {
@@ -637,6 +637,19 @@ private fun wrapLon(lon: Double): Double {
     while (value > 180.0) value -= 360.0
     while (value < -180.0) value += 360.0
     return value
+}
+
+/**
+ * Below [GROUND_ZOOM], slow low traffic is hidden unless it is near an airport, where it is arrivals and departures.
+ * Below [PLANE_CULL_ZOOM], a crowded view keeps one plane per grid cell. Pinned planes always stay.
+ */
+fun declutter(planes: List<VisiblePlane>, view: ViewBox, zoom: Double, pins: Set<String>, airports: AirportGrid): List<VisiblePlane> {
+    val shown = if (zoom < GROUND_ZOOM) {
+        planes.filter { it.hex in pins || !isParked(it.altFt, it.gsKt) || airports.near(it.lat, it.lon, AIRPORT_TRAFFIC_NM) }
+    } else {
+        planes
+    }
+    return if (zoom < PLANE_CULL_ZOOM && shown.size >= THIN_FROM_PLANES) thin(shown, view, pins) else shown
 }
 
 private fun thin(planes: List<VisiblePlane>, view: ViewBox, pins: Set<String>): List<VisiblePlane> {
