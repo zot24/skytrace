@@ -26,7 +26,7 @@ class MainActivity : ComponentActivity() {
             val cancel = MotionEvent.obtain(ev).apply { action = MotionEvent.ACTION_CANCEL }
             super.dispatchTouchEvent(cancel)
             cancel.recycle()
-            MapTouchRouter.forward(map, MapTouchRouter.firstDown(ev))
+            MapTouchRouter.firstDown(ev).also { MapTouchRouter.forward(map, it) }.recycle()
             MapTouchRouter.forward(map, ev)
             MapTouchRouter.routing = true
             return true

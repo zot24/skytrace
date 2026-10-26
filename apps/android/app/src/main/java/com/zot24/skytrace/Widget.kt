@@ -52,7 +52,7 @@ object WidgetSync {
         WorkManager.getInstance(context).enqueueUniquePeriodicWork("skytrace-widget", ExistingPeriodicWorkPolicy.KEEP, request)
     }
 
-    private val metarCache = HashMap<String, Pair<Long, String>>()
+    private val metarCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, String>>()
     private val numbers = java.text.NumberFormat.getIntegerInstance(Locale.US)
 
     /** [planes] is the app's live fleet. Null means a background refresh that fetches the feed itself. */
@@ -99,8 +99,6 @@ object WidgetSync {
             it[keyWidgetSnapshot] = lines.joinToString("\n")
             it[keyWidgetUpdated] = System.currentTimeMillis()
         }
-        val ids = androidx.glance.appwidget.GlanceAppWidgetManager(context).getGlanceIds(FavouritesWidget::class.java)
-        android.util.Log.i("skytrace-widget", "refresh wrote ${lines.size} lines, updating ${ids.size} widget(s)")
         FavouritesWidget().updateAll(context)
     }
 
@@ -162,7 +160,6 @@ class FavouritesWidget : GlanceAppWidget() {
                 if (f.size == 5) WidgetLine(f[0], f[1], f[2], f[3], f[4]) else null
             }
             val updated = prefs[keyWidgetUpdated] ?: 0L
-            android.util.Log.i("skytrace-widget", "compose id=$id lines=${lines.size} updated=$updated")
             val ago = if (updated == 0L) "not updated yet" else {
                 val minutes = ((System.currentTimeMillis() - updated) / 60_000L).toInt()
                 if (minutes < 1) "updated just now" else "updated $minutes min ago"

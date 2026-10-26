@@ -3,6 +3,7 @@ package com.zot24.skytrace
 import android.app.Application
 import android.util.Log
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.datastore.preferences.core.edit
@@ -67,7 +68,7 @@ data class AirportTraffic(val departures: List<TrafficRow>, val arrivals: List<T
 class SkyViewModel(app: Application) : AndroidViewModel(app) {
     val fleet = Fleet()
     var source by mutableStateOf("connecting")
-    var count by mutableStateOf(0)
+    var count by mutableIntStateOf(0)
     var selected by mutableStateOf<String?>(null)
     var detail by mutableStateOf<PlaneDetail?>(null)
     /** Null while looking up; [routeLookedUp] tells "unknown" apart from "not asked yet". */
