@@ -102,6 +102,8 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
     var airports by mutableStateOf<List<Airport>>(emptyList())
     val favouriteAircraft = MutableStateFlow<Set<String>>(emptySet())
     val favouriteAirports = MutableStateFlow<Set<String>>(emptySet())
+    val lastSeen = MutableStateFlow<Map<String, Sighting>>(emptyMap())
+    var aircraftHit by mutableStateOf<AircraftHit?>(null)
     val camera = MutableSharedFlow<CameraJump>(extraBufferCapacity = 1)
     val opening = MutableStateFlow(BUSY_OPENING)
 
@@ -130,6 +132,10 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
             launch {
                 getApplication<Application>().skyStore.data.collect { next ->
                     applyPrefs(next[keyUrl], next[keyAircraft], next[keyAirports])
+                    lastSeen.value = next.asMap().mapNotNull { (key, value) ->
+                        val hex = key.name.removePrefix(SIGHTING_PREFIX)
+                        if (hex == key.name || value !is String) null else decodeSighting(hex, value)?.let { hex to it }
+                    }.toMap()
                 }
             }
             prefsLoaded.complete(Unit)
@@ -373,7 +379,10 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             getApplication<Application>().skyStore.edit { prefs ->
                 val cur = prefs[key]?.toMutableSet() ?: mutableSetOf()
-                if (!cur.add(id)) cur.remove(id)
+                if (!cur.add(id)) {
+                    cur.remove(id)
+                    if (key == keyAircraft) prefs.remove(sightingKey(id))
+                }
                 prefs[key] = cur
             }
             WidgetSync.refresh(getApplication(), fleet.snapshotFor(fleet.snapshot().keys, System.currentTimeMillis()))
@@ -450,6 +459,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
             source = body.src.ifBlank { "adsb.lol" }
             count = fleet.freshCount(now)
             refreshDetail(now)
+            recordFavourites(now)
             logCount(body.rows.size, false)
             return nextPollDelay(true, 0, 0L)
         }
@@ -524,6 +534,57 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         routeResult?.let { route = describeRoute(it, airportsByIcao, plane, onGround, System.currentTimeMillis()) }
+    }
+
+    /** Throttled by [shouldRecord], so a favourite overhead for an hour costs about a dozen writes. */
+    private suspend fun recordFavourites(now: Long) {
+        val seen = lastSeen.value
+        val due = favouriteAircraft.value.mapNotNull { hex ->
+            val plane = fleet.one(hex, now)?.takeIf { fleet.freshness(hex, now)?.live == true } ?: return@mapNotNull null
+            Sighting(hex, plane.callsign, plane.lat, plane.lon, plane.altFt, isOnGround(plane.altFt, plane.gsKt), now, null)
+                .takeIf { shouldRecord(seen[hex], it) }
+        }
+        if (due.isEmpty()) return
+        val withDest = withContext(Dispatchers.IO) {
+            due.map { s -> s.copy(dest = s.callsign.takeIf { it.isNotBlank() }?.let { RouteSource.lookup(it) }?.airports?.lastOrNull()) }
+        }
+        getApplication<Application>().skyStore.edit { prefs ->
+            withDest.forEach { prefs[sightingKey(it.hex)] = encodeSighting(it) }
+        }
+    }
+
+    fun lastSeenText(s: Sighting, now: Long): String =
+        lastSeenLine(s, nearestAirport(airports, s.lat, s.lon), s.dest?.let { airportsByIcao[it] }, now)
+
+    fun showLastSeen(s: Sighting) {
+        closeDetail()
+        camera.tryEmit(CameraJump(s.lat, s.lon, 11.0))
+    }
+
+    /** One adsb.lol lookup per (debounced) search; the phone's favourite history answers when nothing is live. */
+    suspend fun searchAircraft(query: String) {
+        val kind = lookupKind(query)
+        if (kind == null) { aircraftHit = null; return }
+        val needle = query.trim().lowercase(Locale.US)
+        val now = System.currentTimeMillis()
+        fun matches(hex: String, callsign: String, reg: String) =
+            hex == needle || callsign.trim().lowercase(Locale.US) == needle || reg.lowercase(Locale.US) == needle
+        val local = fleet.visible(now, -90.0, 90.0, -180.0, 180.0).firstOrNull { matches(it.hex, it.callsign, it.reg) }
+        val found = local?.hex ?: withContext(Dispatchers.IO) {
+            runCatching {
+                val request = Request.Builder().url(lookupUrl(baseUrl, kind, query)).header("User-Agent", USER_AGENT).build()
+                http.newCall(request).execute().use { parseFeed(it.body?.string().orEmpty()) }
+            }.getOrNull()
+        }?.rows?.firstOrNull()?.let { row ->
+            fleet.accept(listOf(row), now, fresh = true)
+            row.hex
+        }
+        val plane = found?.let { fleet.one(it, System.currentTimeMillis()) }
+        aircraftHit = when {
+            plane != null -> AircraftHit.Live(plane.hex, plane.callsign.ifBlank { plane.hex.uppercase(Locale.US) })
+            else -> lastSeen.value.values.firstOrNull { matches(it.hex, it.callsign, "") }?.let { AircraftHit.LastSeen(it) }
+                ?: AircraftHit.Unknown(query.trim())
+        }
     }
 
     private fun toDetail(plane: VisiblePlane): PlaneDetail {
