@@ -22,6 +22,8 @@ data class PlaneRow(
     val category: String,
 )
 
+data class TrailPoint(val lon: Double, val lat: Double, val altFt: Double)
+
 data class VisiblePlane(
     val hex: String,
     val callsign: String,
@@ -52,7 +54,7 @@ fun project(lat0: Double, lon0: Double, gsKt: Double, trackDeg: Double, dtSec: D
     return lat to lon
 }
 
-private data class Craft(
+internal data class Craft(
     val row: PlaneRow,
     val fixAtMs: Long,
     val anchorLat: Double,
@@ -62,8 +64,8 @@ private data class Craft(
 )
 
 class Fleet {
-    private val craft = LinkedHashMap<String, Craft>()
-    private val trails = HashMap<String, ArrayDeque<Triple<Double, Double, Long>>>()
+    private var craft = LinkedHashMap<String, Craft>()
+    private val trails = HashMap<String, ArrayDeque<Pair<TrailPoint, Long>>>()
     private val deadScratch = ArrayList<String>(8)
 
     fun accept(rows: List<PlaneRow>, now: Long, fresh: Boolean) {
@@ -107,6 +109,15 @@ class Fleet {
         }
     }
 
+    /** Main thread. A shallow copy, so a background merge never reads a map the frame loop is pruning. */
+    internal fun snapshot(): Map<String, Craft> = HashMap(craft)
+
+    /** Main thread. Swaps in a map built by [merge]. */
+    internal fun install(next: LinkedHashMap<String, Craft>) {
+        craft = next
+        trails.keys.retainAll(next.keys)
+    }
+
     fun tracked(now: Long): Int {
         prune(now)
         return craft.size
@@ -130,6 +141,12 @@ class Fleet {
         return out
     }
 
+    /** Prunes once, then poses each hex. Calling one() per hex pruned the whole fleet every time. */
+    fun snapshotFor(hexes: Set<String>, now: Long): List<VisiblePlane> {
+        prune(now)
+        return hexes.mapNotNull { hex -> craft[hex]?.let { pose(it, now) } }
+    }
+
     fun one(hex: String, now: Long): VisiblePlane? {
         prune(now)
         val item = craft[hex] ?: return null
@@ -148,33 +165,33 @@ class Fleet {
         }
     }
 
-    fun noteTrail(hex: String, lon: Double, lat: Double, now: Long) {
+    fun noteTrail(hex: String, lon: Double, lat: Double, altFt: Double, now: Long) {
         val path = trails.getOrPut(hex) { ArrayDeque() }
-        val prev = path.lastOrNull()
+        val prev = path.lastOrNull()?.first
         if (prev != null) {
-            var dLon = abs(prev.first - lon)
+            var dLon = abs(prev.lon - lon)
             if (dLon > 180.0) dLon = 360.0 - dLon
-            if (dLon + abs(prev.second - lat) < 0.0015) return
+            if (dLon + abs(prev.lat - lat) < 0.0015) return
         }
-        path.addLast(Triple(lon, lat, now))
+        path.addLast(TrailPoint(lon, lat, altFt) to now)
         while (path.size > 180) path.removeFirst()
     }
 
-    fun trailSegments(hex: String, now: Long): List<List<Pair<Double, Double>>> {
+    fun trailSegments(hex: String, now: Long): List<List<TrailPoint>> {
         val item = craft[hex] ?: return emptyList()
         val pose = pose(item, now) ?: return emptyList()
         val stored = trails[hex].orEmpty()
-        val real = ArrayList<Pair<Double, Double>>(stored.size + 1)
-        for (point in stored) real.add(point.first to point.second)
-        val tip = pose.lon to pose.lat
+        val real = ArrayList<TrailPoint>(stored.size + 1)
+        for (point in stored) real.add(point.first)
+        val tip = TrailPoint(pose.lon, pose.lat, pose.altFt)
         if (real.isEmpty() || !same(real.last(), tip)) real.add(tip)
-        val features = ArrayList<List<Pair<Double, Double>>>()
-        val originT = stored.firstOrNull()?.third ?: item.fixAtMs
+        val features = ArrayList<List<TrailPoint>>()
+        val originT = stored.firstOrNull()?.second ?: item.fixAtMs
         val span = if (stored.isEmpty()) 0L else now - originT
         if (span < 150_000L && item.row.gsKt >= 40.0 && real.isNotEmpty()) {
             val origin = real.first()
-            val back = project(origin.second, origin.first, item.row.gsKt, item.row.trackDeg, -150.0)
-            features.add(listOf(back.second to back.first, origin))
+            val back = project(origin.lat, origin.lon, item.row.gsKt, item.row.trackDeg, -150.0)
+            features.add(listOf(TrailPoint(back.second, back.first, origin.altFt), origin))
         }
         features.addAll(splitAntimeridian(real))
         return features
@@ -246,16 +263,16 @@ private fun inside(lon: Double, lat: Double, south: Double, north: Double, west:
     return if (west <= east) lon in west..east else lon >= west || lon <= east
 }
 
-private fun same(a: Pair<Double, Double>, b: Pair<Double, Double>): Boolean {
-    return abs(a.first - b.first) < 1e-6 && abs(a.second - b.second) < 1e-6
+private fun same(a: TrailPoint, b: TrailPoint): Boolean {
+    return abs(a.lon - b.lon) < 1e-6 && abs(a.lat - b.lat) < 1e-6
 }
 
-private fun splitAntimeridian(points: List<Pair<Double, Double>>): List<List<Pair<Double, Double>>> {
-    val lines = ArrayList<List<Pair<Double, Double>>>()
-    var current = ArrayList<Pair<Double, Double>>()
+private fun splitAntimeridian(points: List<TrailPoint>): List<List<TrailPoint>> {
+    val lines = ArrayList<List<TrailPoint>>()
+    var current = ArrayList<TrailPoint>()
     for (point in points) {
         val prev = current.lastOrNull()
-        if (prev != null && abs(prev.first - point.first) > 180.0) {
+        if (prev != null && abs(prev.lon - point.lon) > 180.0) {
             if (current.size >= 2) lines.add(current)
             current = ArrayList()
         }
@@ -263,4 +280,35 @@ private fun splitAntimeridian(points: List<Pair<Double, Double>>): List<List<Pai
     }
     if (current.size >= 2) lines.add(current)
     return lines
+}
+
+/** Any thread. The fresh-poll half of [Fleet.accept], built from a [Fleet.snapshot]: same easing anchors, same drop rule. */
+internal fun merge(base: Map<String, Craft>, rows: List<PlaneRow>, now: Long): LinkedHashMap<String, Craft> {
+    val next = LinkedHashMap<String, Craft>(rows.size * 2)
+    for (row in rows) {
+        if (row.hex.isEmpty()) continue
+        val existing = base[row.hex]
+        if (existing == null) {
+            next[row.hex] = Craft(row, now, row.lat, row.lon, row.trackDeg, Long.MIN_VALUE)
+            continue
+        }
+        val pose = pose(existing, now)
+        val merged = existing.row.copy(
+            callsign = row.callsign.ifBlank { existing.row.callsign },
+            lat = row.lat,
+            lon = row.lon,
+            altFt = row.altFt,
+            gsKt = row.gsKt,
+            trackDeg = row.trackDeg,
+            typeCode = row.typeCode.ifBlank { existing.row.typeCode },
+            reg = row.reg.ifBlank { existing.row.reg },
+            category = row.category.ifBlank { existing.row.category },
+        )
+        next[row.hex] = if (pose == null) {
+            Craft(merged, now, row.lat, row.lon, row.trackDeg, Long.MIN_VALUE)
+        } else {
+            Craft(merged, now, pose.lat, pose.lon, pose.trackDeg, now)
+        }
+    }
+    return next
 }

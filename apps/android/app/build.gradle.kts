@@ -45,6 +45,10 @@ android {
 
 val copyAirports = tasks.register<Copy>("copyAirports") {
     from(rootProject.layout.projectDirectory.file("../../public/airports.json"))
+    // VRS standing data routes table (CC0), rebuilt by tools/update-vrs-routes.sh.
+    from(rootProject.layout.projectDirectory.file("data/vrs-routes.txt.gz"))
+    // Satellite style (EOxCloudless 2025, CC BY-NC-SA 4.0).
+    from(rootProject.layout.projectDirectory.file("data/satellite.json"))
     into(layout.projectDirectory.dir("src/main/assets"))
 }
 
@@ -65,5 +69,7 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("androidx.datastore:datastore-preferences:1.1.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    implementation("androidx.glance:glance-appwidget:1.1.1")
+    implementation("androidx.work:work-runtime-ktx:2.10.0")
     testImplementation("junit:junit:4.13.2")
 }

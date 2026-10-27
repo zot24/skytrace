@@ -3,6 +3,8 @@ build/
 local.properties
 app/build/
 app/src/main/assets/airports.json
+app/src/main/assets/vrs-routes.txt.gz
+app/src/main/assets/satellite.json
 *.iml
 .cxx/
 captures/

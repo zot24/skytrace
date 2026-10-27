@@ -1,10 +1,11 @@
 package com.zot24.skytrace
 
-const val PLANE_CULL_ZOOM = 7.0
+const val PLANE_CULL_ZOOM = 8.0
+const val GROUND_ZOOM = 11.0
 const val LOW_ZOOM_PUSH_MS = 200L
 const val HIGH_ZOOM_PUSH_MS = 50L
 const val PLANE_LAYER_ID = "plane-symbols"
-const val HIT_HALF_DP = 24f
+const val HIT_HALF_DP = 32f
 
 data class PlaneHit(val hex: String, val x: Float, val y: Float)
 
@@ -81,6 +82,11 @@ class DrawnIndex {
         this.trailSig = trailSig
     }
 
+    fun reset() {
+        x.clear()
+        selected = "\u0000"
+    }
+
     fun forEachGeo(block: (hex: String, lat: Double, lon: Double) -> Unit) {
         for ((hex, latitude) in lat) {
             val longitude = lon[hex] ?: continue
@@ -119,24 +125,24 @@ fun planesInHitBox(
     return hits
 }
 
-fun trailSignature(trails: List<List<Pair<Double, Double>>>): Int {
+fun trailSignature(trails: List<List<TrailPoint>>): Int {
     var signature = trails.size
     for (segment in trails) {
         signature = signature * 31 + segment.size
         val tip = segment.lastOrNull() ?: continue
-        signature = signature * 31 + tip.first.hashCode()
-        signature = signature * 31 + tip.second.hashCode()
+        signature = signature * 31 + tip.lon.hashCode()
+        signature = signature * 31 + tip.lat.hashCode()
     }
     return signature
 }
 
-fun appendPlaneJson(out: StringBuilder, planes: List<VisiblePlane>, selected: String?) {
+fun appendPlaneJson(out: StringBuilder, planes: List<VisiblePlane>, selected: String?, pins: Set<String>, favourites: Set<String>) {
     out.setLength(0)
     out.append("{\"type\":\"FeatureCollection\",\"features\":[")
     for (i in planes.indices) {
         if (i > 0) out.append(',')
         val plane = planes[i]
-        val icon = if (plane.hex == selected) "${plane.silhouette.name}-sel" else plane.silhouette.name
+        val icon = plane.silhouette.name
         out.append("{\"type\":\"Feature\",\"properties\":{\"hex\":\"")
         appendJsonString(out, plane.hex)
         out.append("\",\"icon\":\"")
@@ -147,6 +153,14 @@ fun appendPlaneJson(out: StringBuilder, planes: List<VisiblePlane>, selected: St
         out.append(plane.trackDeg)
         out.append(",\"op\":")
         out.append(plane.opacity.toDouble())
+        out.append(",\"alt\":")
+        out.append(plane.altFt.toInt())
+        out.append(",\"sel\":")
+        out.append(plane.hex == selected)
+        out.append(",\"pin\":")
+        out.append(plane.hex in pins)
+        out.append(",\"fav\":")
+        out.append(plane.hex in favourites)
         out.append("},\"geometry\":{\"type\":\"Point\",\"coordinates\":[")
         out.append(plane.lon)
         out.append(',')
@@ -156,25 +170,23 @@ fun appendPlaneJson(out: StringBuilder, planes: List<VisiblePlane>, selected: St
     out.append("]}")
 }
 
-fun appendTrailJson(out: StringBuilder, trails: List<List<Pair<Double, Double>>>) {
+/** One two-point line per step, each carrying its mean altitude, so the layer colours the trail by height. */
+fun appendTrailJson(out: StringBuilder, trails: List<List<TrailPoint>>) {
     out.setLength(0)
     out.append("{\"type\":\"FeatureCollection\",\"features\":[")
     var written = 0
     for (segment in trails) {
-        if (segment.size < 2) continue
-        if (written > 0) out.append(',')
-        written += 1
-        out.append("{\"type\":\"Feature\",\"geometry\":{\"type\":\"LineString\",\"coordinates\":[")
-        for (p in segment.indices) {
-            if (p > 0) out.append(',')
-            val point = segment[p]
-            out.append('[')
-            out.append(point.first)
-            out.append(',')
-            out.append(point.second)
-            out.append(']')
+        for (i in 1 until segment.size) {
+            val a = segment[i - 1]
+            val b = segment[i]
+            if (written > 0) out.append(',')
+            written += 1
+            out.append("{\"type\":\"Feature\",\"properties\":{\"alt\":")
+            out.append(((a.altFt + b.altFt) / 2).toInt())
+            out.append("},\"geometry\":{\"type\":\"LineString\",\"coordinates\":[[")
+            out.append(a.lon).append(',').append(a.lat).append("],[")
+            out.append(b.lon).append(',').append(b.lat).append("]]}}")
         }
-        out.append("]}}")
     }
     out.append("]}")
 }

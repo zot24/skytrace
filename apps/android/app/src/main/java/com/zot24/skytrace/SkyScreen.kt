@@ -22,6 +22,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -73,10 +74,19 @@ fun SkyScreen(vm: SkyViewModel = viewModel()) {
         focusManager.clearFocus(force = true)
         if (query.isNotEmpty()) query = ""
     }
-    BackHandler(enabled = about || searchOpen || vm.detail != null) {
+    // Any path that opens a sheet (search pick, favourite, widget link) closes the search dropdown first.
+    LaunchedEffect(vm.airportSheet?.icao, vm.detail?.hex) {
+        if (vm.airportSheet != null || vm.detail != null) dismissSearch()
+    }
+    val chips by vm.typeChips.collectAsState()
+    val mapStyle by vm.mapStyle.collectAsState()
+    val showOverlay = BuildConfig.DEBUG && SyntheticTraffic.overlay
+    BackHandler(enabled = about || searchOpen || vm.detail != null || vm.picker.isNotEmpty() || vm.airportSheet != null) {
         when {
             about -> about = false
             searchOpen -> dismissSearch()
+            vm.picker.isNotEmpty() -> vm.closePicker()
+            vm.airportSheet != null -> vm.closeAirport()
             else -> vm.closeDetail()
         }
     }
@@ -85,9 +95,17 @@ fun SkyScreen(vm: SkyViewModel = viewModel()) {
         SkyMap(
             vm,
             Modifier.fillMaxSize(),
-            onFpsLine = if (BuildConfig.DEBUG) ({ fpsLine = it }) else null,
+            onFpsLine = if (showOverlay) ({ fpsLine = it }) else null,
             onUserGesture = { if (searchOpen) dismissSearch() },
         )
+        vm.styleCover?.let { cover ->
+            androidx.compose.foundation.Image(
+                cover,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = androidx.compose.ui.layout.ContentScale.FillBounds,
+            )
+        }
         Column(
             Modifier
                 .fillMaxWidth()
@@ -113,10 +131,22 @@ fun SkyScreen(vm: SkyViewModel = viewModel()) {
                     color = Muted,
                     fontSize = 12.sp,
                 )
-                if (BuildConfig.DEBUG) {
+                if (showOverlay) {
                     fpsLine?.let { line ->
                         Text(line, color = Muted, fontSize = 11.sp)
                     }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                StyleSwitch(vm, mapStyle)
+                vm.styleLoading?.let { loading ->
+                    Text(
+                        "Loading ${loading.label.lowercase()}…",
+                        color = Muted,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(start = 10.dp).clip(Pill).background(Panel).padding(horizontal = 10.dp, vertical = 5.dp),
+                    )
                 }
             }
             Spacer(Modifier.height(8.dp))
@@ -156,6 +186,8 @@ fun SkyScreen(vm: SkyViewModel = viewModel()) {
                     )
                 }
             }
+            Spacer(Modifier.height(8.dp))
+            TypeChips(vm, chips)
             if (hits.isNotEmpty() || showFavs) {
                 Column(
                     Modifier
@@ -169,7 +201,7 @@ fun SkyScreen(vm: SkyViewModel = viewModel()) {
                         FavouriteBlock(vm, favAirports, favAircraft)
                     }
                     hits.forEach { airport ->
-                        AirportRow(airport, favAirports.contains(airport.icao), { vm.focusAirport(airport); query = airport.iata.ifBlank { airport.icao } }) {
+                        AirportRow(airport, favAirports.contains(airport.icao), { vm.focusAirport(airport); dismissSearch() }) {
                             vm.toggleAirport(airport.icao)
                         }
                     }
@@ -185,57 +217,14 @@ fun SkyScreen(vm: SkyViewModel = viewModel()) {
                 .padding(12.dp),
         ) {
             val detail = vm.detail
-            if (detail != null) {
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(Panel)
-                        .border(1.dp, Line, RoundedCornerShape(16.dp))
-                        .pointerInput(detail.hex) {
-                            var pulled = 0f
-                            detectVerticalDragGestures(
-                                onDragStart = { pulled = 0f },
-                                onDragEnd = { if (pulled > 48.dp.toPx()) vm.closeDetail() },
-                            ) { change, dy ->
-                                change.consume()
-                                pulled += dy
-                            }
-                        }
-                        .padding(16.dp),
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(detail.title, color = Paper, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                        Text(
-                            if (favAircraft.contains(detail.hex)) "★" else "☆",
-                            color = Gold,
-                            fontSize = 22.sp,
-                            modifier = Modifier.clickable { vm.toggleAircraft(detail.hex) },
-                        )
-                        Spacer(Modifier.width(12.dp))
-                        Text(
-                            "×",
-                            color = Muted,
-                            fontSize = 26.sp,
-                            modifier = Modifier.clickable { vm.closeDetail() },
-                        )
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    Fact("Type", detail.type)
-                    Fact("Registration", detail.reg)
-                    Fact("Altitude", detail.altitude)
-                    Fact("Ground speed", detail.speed)
-                    Fact("Heading", detail.heading)
-                }
-                Spacer(Modifier.height(8.dp))
+            val airport = vm.airportSheet
+            when {
+                vm.picker.isNotEmpty() -> PickerSheet(vm)
+                airport != null -> AirportSheet(vm, airport, favAirports.contains(airport.icao))
+                detail != null -> FlightSheet(vm, detail, favAircraft.contains(detail.hex))
             }
-            Text(
-                "ADS-B © adsb.lol contributors (ODbL) · OpenSky (non-commercial fallback) · OurAirports (public domain) · OpenFreeMap · © OpenStreetMap contributors",
-                color = Color(0xC7E8EEF6),
-                fontSize = 11.sp,
-                lineHeight = 15.sp,
-                modifier = Modifier.clickable { about = true },
-            )
+            Spacer(Modifier.height(8.dp))
+            Credits(mapStyle, feedCredit(vm.source)) { about = true }
         }
 
         if (about) {
