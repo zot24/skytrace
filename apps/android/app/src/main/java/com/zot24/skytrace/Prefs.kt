@@ -8,7 +8,7 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 
 internal val Context.skyStore by preferencesDataStore("skytrace")
-internal val keyUrl = stringPreferencesKey("base_url")
+internal val keyUrl = stringPreferencesKey("feed_url")
 internal val keyCamera = stringPreferencesKey("camera")
 internal val keyAircraft = stringSetPreferencesKey("fav_aircraft")
 internal val keyAirports = stringSetPreferencesKey("fav_airports")

@@ -9,51 +9,59 @@ data class FeedBody(
     val rows: List<PlaneRow>,
 )
 
-fun parseFeed(json: String): FeedBody? {
+/**
+ * An adsb.lol v2 response. A plane's age is its `seen_pos` plus however long the response sat in caches
+ * since adsb.lol's `now`, capped so a fast phone clock cannot age everything out.
+ */
+fun parseFeed(json: String, receivedAt: Long = System.currentTimeMillis()): FeedBody? {
     val body = try {
         JSONObject(json)
     } catch (_: Exception) {
         return null
     }
-    val rowsJson = body.optJSONArray("ac")
-    val rows = ArrayList<PlaneRow>(rowsJson?.length() ?: 0)
-    if (rowsJson != null) {
-        for (i in 0 until rowsJson.length()) {
-            val row = rowsJson.optJSONArray(i) ?: continue
-            if (row.length() < 9) continue
-            val hex = row.optString(0).trim().lowercase()
-            if (hex.isEmpty()) continue
-            rows.add(
-                PlaneRow(
-                    hex = hex,
-                    callsign = row.optString(1).trim(),
-                    lat = row.optDouble(2, Double.NaN),
-                    lon = row.optDouble(3, Double.NaN),
-                    altFt = row.optDouble(4, 0.0),
-                    gsKt = row.optDouble(5, 0.0),
-                    trackDeg = row.optDouble(6, 0.0),
-                    typeCode = row.optString(7).trim(),
-                    reg = row.optString(8).trim(),
-                    category = if (row.length() > 9) row.optString(9).trim() else "",
-                ),
-            )
-        }
+    val list = body.optJSONArray("ac") ?: return null
+    val transitMs = body.optLong("now", 0L).let { if (it > 0L) (receivedAt - it).coerceIn(0L, MAX_TRANSIT_MS) else 0L }
+    val rows = ArrayList<PlaneRow>(list.length())
+    for (i in 0 until list.length()) {
+        val ac = list.optJSONObject(i) ?: continue
+        val hex = ac.optString("hex").trim().lowercase()
+        if (hex.isEmpty()) continue
+        val last = ac.optJSONObject("lastPosition")
+        val hasPos = ac.has("lat") && ac.has("lon")
+        val lat = if (hasPos) ac.optDouble("lat") else last?.optDouble("lat") ?: Double.NaN
+        val lon = if (hasPos) ac.optDouble("lon") else last?.optDouble("lon") ?: Double.NaN
+        if (!lat.isFinite() || !lon.isFinite()) continue
+        val seenPos = (if (hasPos) ac.optDouble("seen_pos", 0.0) else last?.optDouble("seen_pos", 0.0) ?: 0.0)
+        val baro = ac.opt("alt_baro")
+        rows.add(
+            PlaneRow(
+                hex = hex,
+                callsign = ac.optString("flight").trim(),
+                lat = lat,
+                lon = lon,
+                altFt = if (baro == "ground") 0.0 else (baro as? Number)?.toDouble() ?: ac.optDouble("alt_geom", 0.0),
+                gsKt = ac.optDouble("gs", 0.0),
+                trackDeg = ac.optDouble("track", ac.optDouble("true_heading", 0.0)),
+                typeCode = ac.optString("t").trim(),
+                reg = ac.optString("r").trim(),
+                category = ac.optString("category").trim(),
+                fixAtMs = receivedAt - transitMs - (seenPos * 1000).toLong(),
+            ),
+        )
     }
-    return FeedBody(
-        src = body.optString("src", "none"),
-        stale = body.optBoolean("stale", false),
-        retryAfterMs = body.optLong("retryAfterMs", 0L),
-        rows = rows.filter { it.lat.isFinite() && it.lon.isFinite() },
-    )
+    return FeedBody(src = "adsb.lol", stale = false, retryAfterMs = 0L, rows = rows)
 }
 
+private const val MAX_TRANSIT_MS = 10_000L
+
+/** adsb.lol's point query around the view's centre, wide enough for its corners; 250 nm is their maximum. */
 fun planesUrl(base: String, south: Double, north: Double, west: Double, east: Double): String {
-    val root = base.trimEnd('/')
-    val latSpan = north - south
-    val lonSpan = kotlin.math.abs(east - west)
-    if (latSpan > 12.0 || lonSpan > 18.0) return "$root/api/planes"
-    fun q(n: Double) = ((kotlin.math.round(n * 2.0) / 2.0)).let { "%.1f".format(java.util.Locale.US, it) }
-    return "$root/api/planes?lamin=${q(south)}&lamax=${q(north)}&lomin=${q(west)}&lomax=${q(east)}"
+    val lat = (south + north) / 2.0
+    val lon = (west + east) / 2.0
+    val dLat = (north - south) / 2.0 * 60.0
+    val dLon = kotlin.math.abs(east - west) / 2.0 * 60.0 * kotlin.math.cos(Math.toRadians(lat))
+    val radius = kotlin.math.sqrt(dLat * dLat + dLon * dLon).coerceIn(5.0, 250.0)
+    return "%s/v2/point/%.3f/%.3f/%.0f".format(java.util.Locale.US, base.trimEnd('/'), lat, lon, kotlin.math.ceil(radius))
 }
 
 fun nextPollDelay(fresh: Boolean, attempt: Int, retryAfterMs: Long): Long {

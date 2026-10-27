@@ -75,6 +75,8 @@ fun SkyScreen(vm: SkyViewModel = viewModel()) {
         if (query.isNotEmpty()) query = ""
     }
     // Any path that opens a sheet (search pick, favourite, widget link) closes the search dropdown first.
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(vm, lifecycle) { vm.poll(lifecycle) }
     LaunchedEffect(vm.airportSheet?.icao, vm.detail?.hex) {
         if (vm.airportSheet != null || vm.detail != null) dismissSearch()
     }
@@ -330,7 +332,7 @@ private fun AboutSheet(baseUrl: String, onSave: (String) -> Unit, onClose: () ->
                 lineHeight = 18.sp,
             )
             Spacer(Modifier.height(12.dp))
-            Text("Worker URL", color = Muted, fontSize = 12.sp)
+            Text("Feed URL", color = Muted, fontSize = 12.sp)
             BasicTextField(
                 value = draft,
                 onValueChange = { draft = it },

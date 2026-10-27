@@ -31,19 +31,18 @@ class MotionTest {
             50_000L,
             fresh = false,
         )
-        val at60 = fleet.one("abc123", 60_000L)!!
-        assertEquals(1f, at60.opacity, 0f)
-        assertEquals(0.0, at60.lat, 1e-9)
-        assertEquals(0.1, at60.lon, 1e-9)
+        val at30 = fleet.one("abc123", 30_000L)!!
+        assertEquals(1f, at30.opacity, 0f)
+        assertEquals(0.0, at30.lat, 1e-9)
+        assertEquals(0.05, at30.lon, 1e-9)
 
-        val at65 = fleet.one("abc123", 65_000L)!!
-        assertEquals(0.5f, at65.opacity, 0.0001f)
-        assertEquals(0.0, at65.lat, 1e-9)
-        assertEquals(0.10833333333333334, at65.lon, 1e-9)
-        assertTrue(at65.lon > at60.lon)
+        val at45 = fleet.one("abc123", 45_000L)!!
+        assertEquals(0.325f, at45.opacity, 0.0001f)
+        assertEquals(0.075, at45.lon, 1e-9)
+        assertTrue(at45.lon > at30.lon)
 
-        assertNull(fleet.one("abc123", 70_000L))
-        assertEquals(0, fleet.tracked(70_000L))
+        assertNull(fleet.one("abc123", 60_000L))
+        assertEquals(0, fleet.tracked(60_000L))
     }
 
     @Test

@@ -29,7 +29,8 @@ import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.roundToInt
 
-const val DEFAULT_BASE = "http://10.0.2.2:8787"
+const val DEFAULT_BASE = "https://api.adsb.lol"
+const val USER_AGENT = "skytrace-android (github.com/zot24/skytrace)"
 
 private const val COUNT_TAG = "skytrace-count"
 
@@ -48,6 +49,7 @@ data class PlaneDetail(
     val onGround: Boolean,
     val speed: String,
     val heading: String,
+    val seen: String,
 )
 
 data class FramePicture(
@@ -116,13 +118,6 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
                 getApplication<Application>().skyStore.edit { it[keyDebugSynthetic] = SyntheticTraffic.planes }
             }
             WidgetSync.schedule(getApplication())
-            launch {
-                while (isActive) {
-                    delay(5_000L)
-                    WidgetSync.refresh(getApplication(), fleet.snapshotFor(fleet.snapshot().keys, System.currentTimeMillis()))
-                    delay(115_000L)
-                }
-            }
             val saved = parseCamera(SyntheticTraffic.camera.takeIf { BuildConfig.DEBUG } ?: prefs[keyCamera])
             val cam = saved ?: BUSY_OPENING
             lastSavedCamera = if (saved != null) formatCamera(cam) else null
@@ -133,7 +128,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
                     applyPrefs(next[keyUrl], next[keyAircraft], next[keyAirports])
                 }
             }
-            pollLoop()
+            prefsLoaded.complete(Unit)
         }
         viewModelScope.launch(Dispatchers.IO) {
             val text = getApplication<Application>().assets.open("airports.json").bufferedReader().use { it.readText() }
@@ -320,7 +315,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun maintainSelection(now: Long) {
-        count = fleet.tracked(now)
+        count = fleet.freshCount(now)
         val hex = selected ?: return
         val plane = fleet.one(hex, now)
         if (plane == null) {
@@ -384,10 +379,18 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
         favouriteAirports.value = airports ?: emptySet()
     }
 
-    private suspend fun pollLoop() {
-        while (viewModelScope.isActive) {
-            val wait = fetchOnce()
-            delay(wait)
+    private val prefsLoaded = kotlinx.coroutines.CompletableDeferred<Unit>()
+
+    /** Called from the screen, so planes and the in-app widget refresh run only while it is visible. */
+    suspend fun poll(lifecycle: androidx.lifecycle.Lifecycle) = kotlinx.coroutines.coroutineScope {
+        prefsLoaded.await()
+        launch { pollWhileStarted(lifecycle) { fetchOnce() } }
+        launch {
+            pollWhileStarted(lifecycle) {
+                delay(5_000L)
+                WidgetSync.refresh(getApplication(), fleet.snapshotFor(fleet.snapshot().keys, System.currentTimeMillis()))
+                115_000L
+            }
         }
     }
 
@@ -398,21 +401,18 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
             acceptFresh(rows, now)
             applyPendingLink()
             source = "synthetic"
-            count = fleet.tracked(now)
+            count = fleet.freshCount(now)
             refreshDetail(now)
             logCount(rows.size, false)
             return 5_000L
         }
         val base = baseUrl
         val view = box
-        val url = if (view == null) {
-            base.trimEnd('/') + "/api/planes"
-        } else {
-            planesUrl(base, view.south, view.north, view.west, view.east)
-        }
+        val v = view ?: ViewBox(BUSY_OPENING.lat - 4.0, BUSY_OPENING.lat + 4.0, BUSY_OPENING.lon - 5.0, BUSY_OPENING.lon + 5.0)
+        val url = planesUrl(base, v.south, v.north, v.west, v.east)
         val fetched = withContext(Dispatchers.IO) {
             try {
-                val request = Request.Builder().url(url).header("Accept", "application/json").build()
+                val request = Request.Builder().url(url).header("Accept", "application/json").header("User-Agent", USER_AGENT).build()
                 http.newCall(request).execute().use { response ->
                     val text = response.body?.string().orEmpty()
                     response.code to parseFeed(text)
@@ -441,7 +441,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
             applyPendingLink()
             attempt = 0
             source = body.src.ifBlank { "adsb.lol" }
-            count = fleet.tracked(now)
+            count = fleet.freshCount(now)
             refreshDetail(now)
             logCount(body.rows.size, false)
             return nextPollDelay(true, 0, 0L)
@@ -484,7 +484,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
         } else {
             "feed unavailable"
         }
-        count = fleet.tracked(now)
+        count = fleet.freshCount(now)
         refreshDetail(now)
     }
 
@@ -531,6 +531,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
             onGround = isOnGround(plane.altFt, plane.gsKt),
             speed = "${numbers.format(plane.gsKt.roundToInt())} kt",
             heading = "%03d°".format(Locale.US, heading.roundToInt() % 360),
+            seen = fleet.freshness(plane.hex, System.currentTimeMillis())?.let { seenLabel(it) }.orEmpty(),
         )
     }
 
@@ -658,7 +659,6 @@ fun isParked(altFt: Double, gsKt: Double): Boolean = isOnGround(altFt, gsKt) || 
 fun feedCredit(source: String): String? {
     val base = source.removeSuffix(" · stale")
     return when {
-        base.contains("opensky", ignoreCase = true) -> "OpenSky"
         base.contains("adsb", ignoreCase = true) -> "adsb.lol"
         else -> null
     }
