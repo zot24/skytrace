@@ -1,6 +1,7 @@
 package com.zot24.skytrace
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -46,7 +47,7 @@ internal val SheetLine = Color(0x1FFFFFFF)
 
 /** A bottom card that closes on a downward swipe. Back is handled by the screen. */
 @Composable
-fun SwipeSheet(key: Any, onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+fun SwipeSheet(key: Any, onDismiss: () -> Unit, onExpand: (() -> Unit)? = null, content: @Composable ColumnScope.() -> Unit) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -57,15 +58,19 @@ fun SwipeSheet(key: Any, onDismiss: () -> Unit, content: @Composable ColumnScope
                 var pulled = 0f
                 detectVerticalDragGestures(
                     onDragStart = { pulled = 0f },
-                    onDragEnd = { if (pulled > 48.dp.toPx()) onDismiss() },
+                    onDragEnd = {
+                        if (pulled > 48.dp.toPx()) onDismiss()
+                        if (pulled < -48.dp.toPx()) onExpand?.invoke()
+                    },
                 ) { change, dy ->
                     change.consume()
                     pulled += dy
                 }
             }
+            .animateContentSize()
             .padding(16.dp),
     ) {
-        Box(Modifier.align(Alignment.CenterHorizontally).width(36.dp).height(4.dp).clip(RoundedCornerShape(2.dp)).background(SheetLine))
+        Box(Modifier.align(Alignment.CenterHorizontally).clickable(enabled = onExpand != null) { onExpand?.invoke() }.padding(vertical = 4.dp).width(36.dp).height(4.dp).clip(RoundedCornerShape(2.dp)).background(SheetLine))
         Spacer(Modifier.height(8.dp))
         content()
     }
@@ -94,10 +99,22 @@ fun SheetFact(label: String, value: String, valueColor: Color = SheetPaper) {
 @Composable
 fun FlightSheet(vm: SkyViewModel, detail: PlaneDetail, favourite: Boolean) {
     val following = vm.followHex == detail.hex
-    SwipeSheet(detail.hex, onDismiss = { vm.closeDetail() }) {
+    val expanded = vm.detailExpanded
+    SwipeSheet(
+        detail.hex,
+        onDismiss = { if (expanded) vm.detailExpanded = false else vm.closeDetail() },
+        onExpand = { vm.detailExpanded = true }.takeUnless { expanded },
+    ) {
         SheetTitle(detail.title, favourite, { vm.toggleAircraft(detail.hex) }, { vm.closeDetail() })
         Spacer(Modifier.height(6.dp))
         val route = vm.route
+        if (!expanded) {
+            Text(route?.label ?: if (vm.routeLookedUp) "Route unknown" else "Looking up route…", color = if (route == null) SheetMuted else SheetPaper, fontSize = 13.sp, maxLines = 1)
+            SheetFact("Altitude", if (detail.onGround) "On ground" else detail.altitude)
+            SheetFact("Ground speed", detail.speed)
+            if (detail.seen.isNotEmpty()) SheetFact("Position", detail.seen)
+            return@SwipeSheet
+        }
         if (route == null) {
             Text(if (vm.routeLookedUp) "Route unknown" else "Looking up route…", color = SheetMuted, fontSize = 12.sp, modifier = Modifier.padding(bottom = 4.dp))
         } else {

@@ -86,6 +86,10 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
             value?.setPlaneFilter(planeFilterExpression(typeChips.value))
         }
     var followHex by mutableStateOf<String?>(null)
+    var detailExpanded by mutableStateOf(false)
+
+    /** Pixels hidden behind the header and the bottom sheet; the camera centres and fits within what is left. */
+    var mapInsets by mutableStateOf(MapInsets(0, 0))
     var styleCover by mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null)
     var styleLoading by mutableStateOf<MapStyle?>(null)
     var picker by mutableStateOf<List<PickerRow>>(emptyList())
@@ -160,6 +164,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
 
     fun focusAircraft(hex: String) {
         val plane = fleet.one(hex, System.currentTimeMillis()) ?: return
+        detailExpanded = false
         selected = hex
         detail = toDetail(plane)
         camera.tryEmit(CameraJump(plane.lat, plane.lon, 7.0))
@@ -189,6 +194,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
         picker = emptyList()
         airportSheet = null
         if (followHex != null && followHex != hex) followHex = null
+        detailExpanded = false
         selected = hex
         detail = toDetail(plane)
     }
@@ -309,6 +315,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun closeDetail() {
+        detailExpanded = false
         selected = null
         detail = null
         followHex = null
@@ -663,3 +670,5 @@ fun feedCredit(source: String): String? {
         else -> null
     }
 }
+
+data class MapInsets(val top: Int, val bottom: Int)

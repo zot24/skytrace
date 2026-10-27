@@ -16,6 +16,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.findRootCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -111,6 +114,7 @@ fun SkyScreen(vm: SkyViewModel = viewModel()) {
         Column(
             Modifier
                 .fillMaxWidth()
+                .onGloballyPositioned { vm.mapInsets = vm.mapInsets.copy(top = it.boundsInRoot().bottom.toInt()) }
                 .statusBarsPadding()
                 .padding(horizontal = 12.dp, vertical = 10.dp),
         ) {
@@ -215,6 +219,10 @@ fun SkyScreen(vm: SkyViewModel = viewModel()) {
             Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
+                .onGloballyPositioned {
+                    val hidden = it.findRootCoordinates().size.height - it.boundsInRoot().top
+                    vm.mapInsets = vm.mapInsets.copy(bottom = hidden.toInt())
+                }
                 .navigationBarsPadding()
                 .padding(12.dp),
         ) {
