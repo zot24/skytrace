@@ -24,10 +24,15 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.Locale
 import java.util.concurrent.TimeUnit
+import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.floor
+import kotlin.math.hypot
 import kotlin.math.max
+import kotlin.math.pow
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 const val DEFAULT_BASE = "https://api.adsb.lol"
 const val USER_AGENT = "skytrace-android (github.com/zot24/skytrace)"
@@ -354,7 +359,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
         val inView = fleet.visible(now, padded.south, padded.north, padded.west, padded.east, hex ?: followHex)
         val chips = typeChips.value
         val kept = if (chips.isEmpty()) inView else inView.filter { it.hex in pins || keepsPlane(chips, it.silhouette, it.hex in favourites) }
-        val planes = declutter(kept, padded, zoom, pins, airportGrid)
+        val planes = spreadGround(declutter(kept, padded, zoom, pins, airportGrid), zoom)
         val trails = if (hex == null) {
             emptyList()
         } else {
@@ -676,6 +681,41 @@ private fun thin(planes: List<VisiblePlane>, view: ViewBox, pins: Set<String>): 
     out.addAll(cells.values)
     out.addAll(pinned)
     return out
+}
+
+/**
+ * Parked planes closer than [GROUND_SPREAD_DP] on screen are fanned out on a small ring around their centre,
+ * so a busy apron shows separate icons instead of one blob.
+ */
+fun spreadGround(planes: List<VisiblePlane>, zoom: Double): List<VisiblePlane> {
+    val parked = planes.filter { isParked(it.altFt, it.gsKt) }.sortedBy { it.hex }
+    if (parked.size < 2) return planes
+    val gapM = GROUND_SPREAD_DP * 40_075_016.686 * cos(Math.toRadians(parked[0].lat)) / (512.0 * 2.0.pow(zoom))
+    val groups = ArrayList<MutableList<VisiblePlane>>()
+    for (plane in parked) {
+        val group = groups.firstOrNull { metres(it[0], plane) < gapM }
+        if (group == null) groups += mutableListOf(plane) else group += plane
+    }
+    val moved = HashMap<String, VisiblePlane>()
+    for (group in groups) {
+        if (group.size < 2) continue
+        val lat = group.sumOf { it.lat } / group.size
+        val lon = group.sumOf { it.lon } / group.size
+        val radiusM = gapM / (2 * sin(PI / group.size))
+        group.forEachIndexed { i, plane ->
+            val angle = 2 * PI * i / group.size
+            val dLat = radiusM * cos(angle) / 111_320.0
+            val dLon = radiusM * sin(angle) / (111_320.0 * cos(Math.toRadians(lat)))
+            moved[plane.hex] = plane.copy(lat = lat + dLat, lon = lon + dLon)
+        }
+    }
+    return if (moved.isEmpty()) planes else planes.map { moved[it.hex] ?: it }
+}
+
+private fun metres(a: VisiblePlane, b: VisiblePlane): Double {
+    val dy = (a.lat - b.lat) * 111_320.0
+    val dx = (a.lon - b.lon) * 111_320.0 * cos(Math.toRadians(a.lat))
+    return hypot(dx, dy)
 }
 
 internal fun distanceNm(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {

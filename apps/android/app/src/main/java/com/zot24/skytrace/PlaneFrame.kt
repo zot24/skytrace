@@ -8,6 +8,7 @@ const val LOW_ZOOM_PUSH_MS = 200L
 const val HIGH_ZOOM_PUSH_MS = 50L
 const val PLANE_LAYER_ID = "plane-symbols"
 const val HIT_HALF_DP = 32f
+const val GROUND_SPREAD_DP = 40.0
 
 data class PlaneHit(val hex: String, val x: Float, val y: Float)
 
@@ -163,6 +164,11 @@ fun appendPlaneJson(out: StringBuilder, planes: List<VisiblePlane>, selected: St
         out.append(plane.hex in pins)
         out.append(",\"fav\":")
         out.append(plane.hex in favourites)
+        out.append(",\"gnd\":")
+        out.append(isParked(plane.altFt, plane.gsKt))
+        out.append(",\"cs\":\"")
+        appendJsonString(out, plane.callsign.ifBlank { plane.reg })
+        out.append('"')
         out.append("},\"geometry\":{\"type\":\"Point\",\"coordinates\":[")
         out.append(plane.lon)
         out.append(',')

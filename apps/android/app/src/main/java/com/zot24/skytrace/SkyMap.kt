@@ -627,6 +627,19 @@ private fun install(style: Style, airports: List<Airport>, context: Context): Pl
             ),
         ),
     )
+    val groundLabels = SymbolLayer("ground-labels", "planes").withFilter(Expression.eq(Expression.get("gnd"), true)).withProperties(
+        PropertyFactory.textField(Expression.get("cs")),
+        PropertyFactory.textFont(arrayOf("Noto Sans Regular")),
+        PropertyFactory.textSize(10f),
+        PropertyFactory.textColor("#E8ECF2"),
+        PropertyFactory.textHaloColor("rgba(4,6,10,0.9)"),
+        PropertyFactory.textHaloWidth(1.4f),
+        PropertyFactory.textAnchor(Property.TEXT_ANCHOR_TOP),
+        PropertyFactory.textOffset(arrayOf(0f, 1.2f)),
+        PropertyFactory.textAllowOverlap(false),
+        PropertyFactory.textOptional(true),
+    )
+    groundLabels.minZoom = 8f
     style.addLayer(large)
     style.addLayer(medium)
     style.addLayer(labels)
@@ -634,6 +647,7 @@ private fun install(style: Style, airports: List<Airport>, context: Context): Pl
     style.addLayer(line("trail-casing", Expression.color(0xFF1A1004.toInt()), 0.95f, 0f, Expression.stop(1, 6), Expression.stop(6, 8), Expression.stop(10, 11), Expression.stop(14, 15)))
     style.addLayer(line("trail-core", altitudeColor(), 1f, 0f, Expression.stop(1, 3), Expression.stop(6, 4), Expression.stop(10, 5.5), Expression.stop(14, 7.5)))
     style.addLayer(planes)
+    style.addLayer(groundLabels)
     return PlaneSymbols(planes)
 }
 
