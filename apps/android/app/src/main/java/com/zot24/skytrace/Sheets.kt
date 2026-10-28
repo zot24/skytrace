@@ -30,6 +30,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontFamily
@@ -231,7 +236,23 @@ fun AirportSheet(vm: SkyViewModel, airport: Airport, favourite: Boolean) {
 
 @Composable
 fun TypeChips(vm: SkyViewModel, active: Set<TypeChip>) {
-    Row(Modifier.horizontalScroll(rememberScrollState())) {
+    val scroll = rememberScrollState()
+    Row(
+        Modifier
+            .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+            .drawWithContent {
+                drawContent()
+                if (scroll.canScrollForward) {
+                    val fade = 32.dp.toPx()
+                    drawRect(
+                        Brush.horizontalGradient(listOf(Color.Black, Color.Transparent), startX = size.width - fade, endX = size.width),
+                        blendMode = BlendMode.DstIn,
+                    )
+                }
+            }
+            .horizontalScroll(scroll)
+            .padding(end = 24.dp),
+    ) {
         for (chip in TypeChip.entries) {
             val on = chip in active
             Text(
