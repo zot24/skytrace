@@ -65,6 +65,7 @@ fun SkyScreen(vm: SkyViewModel = viewModel()) {
     val favAirports by vm.favouriteAirports.collectAsState()
     var query by remember { mutableStateOf("") }
     var focused by remember { mutableStateOf(false) }
+    var resultsOpen by remember { mutableStateOf(false) }
     var about by remember { mutableStateOf(false) }
     var fpsLine by remember { mutableStateOf<String?>(null) }
     val hits = if (query.isBlank()) emptyList() else searchAirports(vm.airports, query)
@@ -73,34 +74,42 @@ fun SkyScreen(vm: SkyViewModel = viewModel()) {
     val countText = NumberFormat.getIntegerInstance(Locale.US).format(vm.count)
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
-    val dismissSearch = {
+    val hideResults = {
         keyboard?.hide()
         focusManager.clearFocus(force = true)
+        resultsOpen = false
+    }
+    val clearQuery = {
+        hideResults()
         if (query.isNotEmpty()) query = ""
     }
     // Any path that opens a sheet (search pick, favourite, widget link) closes the search dropdown first.
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(vm, lifecycle) { vm.poll(lifecycle) }
     LaunchedEffect(vm.airportSheet?.icao, vm.detail?.hex) {
-        if (vm.airportSheet != null || vm.detail != null) dismissSearch()
+        if (vm.airportSheet != null || vm.detail != null) hideResults()
     }
     LaunchedEffect(query) {
-        vm.aircraftHit = null
-        if (lookupKind(query) != null) {
-            delay(800)
-            vm.searchAircraft(query)
+        if (query.isBlank()) {
+            vm.aircraftHits = emptyList()
+            vm.clearTypeFocus()
+            return@LaunchedEffect
         }
+        delay(250)
+        vm.searchAircraft(query)
     }
     val chips by vm.typeChips.collectAsState()
     val mapStyle by vm.mapStyle.collectAsState()
     val showOverlay = BuildConfig.DEBUG && SyntheticTraffic.overlay
+    val listOpen = resultsOpen || (focused && query.isBlank())
     BackHandler(enabled = about || searchOpen || vm.detail != null || vm.picker.isNotEmpty() || vm.airportSheet != null) {
         when {
             about -> about = false
-            searchOpen -> dismissSearch()
+            listOpen -> clearQuery()
             vm.picker.isNotEmpty() -> vm.closePicker()
             vm.airportSheet != null -> vm.closeAirport()
-            else -> vm.closeDetail()
+            vm.detail != null -> vm.closeDetail()
+            else -> clearQuery()
         }
     }
 
@@ -109,7 +118,7 @@ fun SkyScreen(vm: SkyViewModel = viewModel()) {
             vm,
             Modifier.fillMaxSize(),
             onFpsLine = if (showOverlay) ({ fpsLine = it }) else null,
-            onUserGesture = { if (searchOpen) dismissSearch() },
+            onUserGesture = { if (listOpen) hideResults() },
         )
         vm.styleCover?.let { cover ->
             androidx.compose.foundation.Image(
@@ -175,18 +184,24 @@ fun SkyScreen(vm: SkyViewModel = viewModel()) {
             ) {
                 BasicTextField(
                     value = query,
-                    onValueChange = { query = it },
+                    onValueChange = {
+                        query = it
+                        resultsOpen = it.isNotBlank()
+                    },
                     textStyle = TextStyle(color = Paper, fontSize = 14.sp),
                     cursorBrush = SolidColor(Gold),
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search, autoCorrectEnabled = false),
                     modifier = Modifier
                         .weight(1f)
-                        .onFocusChanged { focused = it.isFocused }
+                        .onFocusChanged {
+                            focused = it.isFocused
+                            if (it.isFocused && query.isNotBlank()) resultsOpen = true
+                        }
                         .padding(vertical = 4.dp),
                     decorationBox = { inner ->
                         if (query.isEmpty()) {
-                            Text("Search airport, flight, registration, hex", color = Muted, fontSize = 14.sp)
+                            Text("Search airport, flight, registration, hex, type", color = Muted, fontSize = 14.sp)
                         }
                         inner()
                     },
@@ -196,14 +211,22 @@ fun SkyScreen(vm: SkyViewModel = viewModel()) {
                         "×",
                         color = Muted,
                         fontSize = 20.sp,
-                        modifier = Modifier.clickable { dismissSearch() }.padding(start = 8.dp, top = 2.dp, bottom = 2.dp),
+                        modifier = Modifier.clickable { clearQuery() }.padding(start = 8.dp, top = 2.dp, bottom = 2.dp),
                     )
                 }
             }
+            vm.typeFocusLabel?.let { label ->
+                Text(
+                    "Showing $label on the map",
+                    color = Gold,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(start = 6.dp, top = 6.dp),
+                )
+            }
             Spacer(Modifier.height(8.dp))
             TypeChips(vm, chips)
-            val aircraftHit = vm.aircraftHit
-            if (hits.isNotEmpty() || showFavs || aircraftHit != null) {
+            val aircraftHits = vm.aircraftHits
+            if ((showFavs || resultsOpen) && (hits.isNotEmpty() || showFavs || aircraftHits.isNotEmpty())) {
                 Column(
                     Modifier
                         .padding(top = 6.dp)
@@ -215,9 +238,9 @@ fun SkyScreen(vm: SkyViewModel = viewModel()) {
                     if (showFavs) {
                         FavouriteBlock(vm, favAirports, favAircraft)
                     }
-                    aircraftHit?.let { hit -> AircraftHitRow(vm, hit, dismissSearch) }
+                    aircraftHits.forEach { hit -> AircraftHitRow(vm, hit, hideResults) }
                     hits.forEach { airport ->
-                        AirportRow(airport, favAirports.contains(airport.icao), { vm.focusAirport(airport); dismissSearch() }) {
+                        AirportRow(airport, favAirports.contains(airport.icao), { vm.focusAirport(airport); clearQuery() }) {
                             vm.toggleAirport(airport.icao)
                         }
                     }
@@ -279,7 +302,7 @@ private fun FavouriteBlock(vm: SkyViewModel, airports: Set<String>, aircraft: Se
 @Composable
 private fun AircraftHitRow(vm: SkyViewModel, hit: AircraftHit, dismissSearch: () -> Unit) {
     when (hit) {
-        is AircraftHit.Live -> AircraftRow(hit.title, "live now") { vm.focusAircraft(hit.hex); dismissSearch() }
+        is AircraftHit.Live -> AircraftRow(hit.title, hit.line) { vm.focusAircraft(hit.hex); dismissSearch() }
         is AircraftHit.LastSeen -> AircraftRow(
             hit.sighting.callsign.ifBlank { hit.sighting.hex.uppercase(Locale.US) },
             vm.lastSeenText(hit.sighting, System.currentTimeMillis()),
