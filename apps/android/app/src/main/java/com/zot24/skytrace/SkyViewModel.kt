@@ -50,6 +50,7 @@ data class PlaneDetail(
     val speed: String,
     val heading: String,
     val seen: String,
+    val resting: Boolean = false,
 )
 
 data class FramePicture(
@@ -84,7 +85,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
     var planeSymbols: PlaneSymbols? = null
         set(value) {
             field = value
-            value?.setPlaneFilter(planeFilterExpression(typeChips.value))
+            applyLayerFilter()
         }
     var followHex by mutableStateOf<String?>(null)
     var detailExpanded by mutableStateOf(false)
@@ -104,12 +105,16 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
     val favouriteAircraft = MutableStateFlow<Set<String>>(emptySet())
     val favouriteAirports = MutableStateFlow<Set<String>>(emptySet())
     val lastSeen = MutableStateFlow<Map<String, Sighting>>(emptyMap())
-    var aircraftHit by mutableStateOf<AircraftHit?>(null)
+    var aircraftHits by mutableStateOf<List<AircraftHit>>(emptyList())
+    /** Set while the search box names a kind of aircraft, such as 737 or helicopter. */
+    var typeFocusLabel by mutableStateOf<String?>(null)
+    private var typeFocus: TypeMatch? = null
     val camera = MutableSharedFlow<CameraJump>(extraBufferCapacity = 1)
     val opening = MutableStateFlow(BUSY_OPENING)
 
     private var box: ViewBox? = null
     private var attempt = 0
+    private var favAttempt = 0
     private var lastTrail = 0L
     private var lastSavedCamera: String? = null
     private var cameraWritable = false
@@ -248,10 +253,30 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun setChips(chips: Set<TypeChip>, save: Boolean) {
         typeChips.value = chips
-        planeSymbols?.setPlaneFilter(planeFilterExpression(chips))
+        applyLayerFilter()
         if (save) {
             viewModelScope.launch { getApplication<Application>().skyStore.edit { it[keyChips] = chips.map { c -> c.name }.toSet() } }
         }
+    }
+
+    fun clearTypeFocus() {
+        if (typeFocus == null && typeFocusLabel == null) return
+        typeFocus = null
+        typeFocusLabel = null
+        applyLayerFilter()
+    }
+
+    private fun focusType(match: TypeMatch?) {
+        if (typeFocus == match) return
+        typeFocus = match
+        typeFocusLabel = match?.label
+        applyLayerFilter()
+    }
+
+    /** A type search replaces the chips until the query is cleared. The source itself is already limited to that type. */
+    private fun applyLayerFilter() {
+        val expression = if (typeFocus != null) null else planeFilterExpression(typeChips.value)
+        planeSymbols?.setPlaneFilter(expression)
     }
 
     /** skytrace://airport/ICAO or skytrace://aircraft/hex, from the widget. */
@@ -352,8 +377,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
         followHex?.let { pins += it }
         pins.addAll(favourites)
         val inView = fleet.visible(now, padded.south, padded.north, padded.west, padded.east, hex ?: followHex)
-        val chips = typeChips.value
-        val kept = if (chips.isEmpty()) inView else inView.filter { it.hex in pins || keepsPlane(chips, it.silhouette, it.hex in favourites) }
+        val kept = planesForFrame(inView, typeChips.value, typeFocus, pins, favourites)
         val planes = declutter(kept, padded, zoom, pins, airportGrid)
         val trails = if (hex == null) {
             emptyList()
@@ -393,6 +417,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
         baseUrl = url?.ifBlank { DEFAULT_BASE } ?: DEFAULT_BASE
         favouriteAircraft.value = aircraft ?: emptySet()
         favouriteAirports.value = airports ?: emptySet()
+        fleet.keep(favouriteAircraft.value)
     }
 
     private val prefsLoaded = kotlinx.coroutines.CompletableDeferred<Unit>()
@@ -401,6 +426,7 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun poll(lifecycle: androidx.lifecycle.Lifecycle) = kotlinx.coroutines.coroutineScope {
         prefsLoaded.await()
         launch { pollWhileStarted(lifecycle) { fetchOnce() } }
+        launch { pollWhileStarted(lifecycle) { fetchFavourites() } }
         launch {
             pollWhileStarted(lifecycle) {
                 delay(5_000L)
@@ -475,10 +501,12 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun acceptFresh(rows: List<PlaneRow>, now: Long) {
         val t0 = android.os.SystemClock.elapsedRealtime()
         val base = fleet.snapshot()
+        val rested = fleet.restingSnapshot()
+        val keep = favouriteAircraft.value
         val t1 = android.os.SystemClock.elapsedRealtime()
-        val next = withContext(Dispatchers.Default) { merge(base, rows, now) }
+        val next = withContext(Dispatchers.Default) { merge(base, rows, now, keep, rested) }
         val t2 = android.os.SystemClock.elapsedRealtime()
-        fleet.install(next)
+        fleet.install(next.live, next.resting)
         val t3 = android.os.SystemClock.elapsedRealtime()
         Log.i("skytrace-perf", "accept rows=${rows.size} mainMs=${(t1 - t0) + (t3 - t2)} bgMs=${t2 - t1}")
     }
@@ -536,13 +564,14 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
         routeResult?.let { route = describeRoute(it, airportsByIcao, plane, onGround, System.currentTimeMillis()) }
     }
 
-    /** Throttled by [shouldRecord], so a favourite overhead for an hour costs about a dozen writes. */
-    private suspend fun recordFavourites(now: Long) {
+    /** Favourites are written every [FAVOURITE_SIGHTING_EVERY_MS], and at once when they go quiet. */
+    private suspend fun recordFavourites(now: Long, force: Set<String> = emptySet()) {
         val seen = lastSeen.value
         val due = favouriteAircraft.value.mapNotNull { hex ->
-            val plane = fleet.one(hex, now)?.takeIf { fleet.freshness(hex, now)?.live == true } ?: return@mapNotNull null
-            Sighting(hex, plane.callsign, plane.lat, plane.lon, plane.altFt, isOnGround(plane.altFt, plane.gsKt), now, null)
-                .takeIf { shouldRecord(seen[hex], it) }
+            val plane = fleet.one(hex, now) ?: return@mapNotNull null
+            val at = fleet.fixAt(hex) ?: now
+            val sighting = Sighting(hex, plane.callsign, plane.lat, plane.lon, plane.altFt, isOnGround(plane.altFt, plane.gsKt), at, null)
+            sighting.takeIf { hex in force || shouldRecord(seen[hex], sighting, FAVOURITE_SIGHTING_EVERY_MS) }
         }
         if (due.isEmpty()) return
         val withDest = withContext(Dispatchers.IO) {
@@ -561,29 +590,81 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
         camera.tryEmit(CameraJump(s.lat, s.lon, 11.0))
     }
 
-    /** One adsb.lol lookup per (debounced) search; the phone's favourite history answers when nothing is live. */
-    suspend fun searchAircraft(query: String) {
-        val kind = lookupKind(query)
-        if (kind == null) { aircraftHit = null; return }
-        val needle = query.trim().lowercase(Locale.US)
-        val now = System.currentTimeMillis()
-        fun matches(hex: String, callsign: String, reg: String) =
-            hex == needle || callsign.trim().lowercase(Locale.US) == needle || reg.lowercase(Locale.US) == needle
-        val local = fleet.visible(now, -90.0, 90.0, -180.0, 180.0).firstOrNull { matches(it.hex, it.callsign, it.reg) }
-        val found = local?.hex ?: withContext(Dispatchers.IO) {
-            runCatching {
-                val request = Request.Builder().url(lookupUrl(baseUrl, kind, query)).header("User-Agent", USER_AGENT).build()
-                http.newCall(request).execute().use { parseFeed(it.body?.string().orEmpty()) }
-            }.getOrNull()
-        }?.rows?.firstOrNull()?.let { row ->
-            fleet.accept(listOf(row), now, fresh = true)
-            row.hex
+    /**
+     * Favourites are one batched hex lookup, on a shorter period than the area feed.
+     * A hex the feed no longer returns is parked at its last fix.
+     */
+    private suspend fun fetchFavourites(): Long {
+        if (BuildConfig.DEBUG && SyntheticTraffic.planes > 0) return FAVOURITE_POLL_MS
+        val ids = favouriteAircraft.value
+        if (ids.isEmpty()) return FAVOURITE_POLL_MS
+        val rows = ArrayList<PlaneRow>()
+        for (chunk in ids.chunked(25)) {
+            val fetched = fetchFeed(hexesUrl(baseUrl, chunk))
+            val body = fetched?.second
+            if (fetched == null || fetched.first !in 200..299 || body == null) {
+                favAttempt += 1
+                return nextPollDelay(false, favAttempt, 0L).coerceAtLeast(FAVOURITE_POLL_MS)
+            }
+            rows.addAll(body.rows)
         }
-        val plane = found?.let { fleet.one(it, System.currentTimeMillis()) }
-        aircraftHit = when {
-            plane != null -> AircraftHit.Live(plane.hex, plane.callsign.ifBlank { plane.hex.uppercase(Locale.US) })
-            else -> lastSeen.value.values.firstOrNull { matches(it.hex, it.callsign, "") }?.let { AircraftHit.LastSeen(it) }
-                ?: AircraftHit.Unknown(query.trim())
+        favAttempt = 0
+        val now = System.currentTimeMillis()
+        val heard = rows.map { it.hex }.toSet()
+        val parked = fleet.upsert(rows, now, ids - heard)
+        recordFavourites(now, parked)
+        return FAVOURITE_POLL_MS
+    }
+
+    private suspend fun fetchFeed(url: String): Pair<Int, FeedBody?>? = withContext(Dispatchers.IO) {
+        try {
+            val request = Request.Builder().url(url).header("Accept", "application/json").header("User-Agent", USER_AGENT).build()
+            http.newCall(request).execute().use { response ->
+                response.code to parseFeed(response.body?.string().orEmpty())
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Local matches across callsign, registration, hex, type code, and aircraft names.
+     * A type name such as 737 filters the map. A flight, registration, or hex also asks adsb.lol.
+     */
+    suspend fun searchAircraft(query: String) {
+        val needle = query.trim()
+        if (needle.isEmpty()) {
+            aircraftHits = emptyList()
+            clearTypeFocus()
+            return
+        }
+        val match = typeMatch(needle)
+        focusType(match)
+        val kind = if (match == null) lookupKind(needle) else null
+        if (kind != null) {
+            val row = fetchFeed(lookupUrl(baseUrl, kind, needle))?.second?.rows?.firstOrNull()
+            if (row != null) fleet.upsert(listOf(row), System.currentTimeMillis(), emptySet())
+        }
+        val now = System.currentTimeMillis()
+        val planes = searchPlanes(fleet.visible(now), needle)
+        val seenHex = planes.map { it.hex }.toSet()
+        val history = lastSeen.value.values
+            .filter { it.hex !in seenHex && sightingScore(it, needle) > 0 }
+            .sortedByDescending { sightingScore(it, needle) }
+        val hits = ArrayList<AircraftHit>(8)
+        for (plane in planes) {
+            if (hits.size >= 8) break
+            val title = plane.callsign.ifBlank { plane.hex.uppercase(Locale.US) }
+            hits.add(AircraftHit.Live(plane.hex, title, describeHit(plane)))
+        }
+        for (sighting in history) {
+            if (hits.size >= 8) break
+            hits.add(AircraftHit.LastSeen(sighting))
+        }
+        aircraftHits = if (hits.isEmpty() && (kind != null || match != null)) {
+            listOf(AircraftHit.Unknown(needle))
+        } else {
+            hits
         }
     }
 
@@ -599,7 +680,13 @@ class SkyViewModel(app: Application) : AndroidViewModel(app) {
             onGround = isOnGround(plane.altFt, plane.gsKt),
             speed = "${numbers.format(plane.gsKt.roundToInt())} kt",
             heading = "%03d°".format(Locale.US, heading.roundToInt() % 360),
-            seen = fleet.freshness(plane.hex, System.currentTimeMillis())?.let { seenLabel(it) }.orEmpty(),
+            seen = if (plane.resting) {
+                val at = fleet.fixAt(plane.hex) ?: System.currentTimeMillis()
+                "last signal ${agoLabel((System.currentTimeMillis() - at).coerceAtLeast(0L))}"
+            } else {
+                fleet.freshness(plane.hex, System.currentTimeMillis())?.let { seenLabel(it) }.orEmpty()
+            },
+            resting = plane.resting,
         )
     }
 
@@ -618,6 +705,19 @@ private fun parseCamera(raw: String?): CameraJump? {
     val zoom = parts[2].toDoubleOrNull() ?: return null
     if (lat !in -85.0..85.0 || lon !in -180.0..180.0 || zoom !in 0.5..18.0) return null
     return CameraJump(lat, lon, zoom)
+}
+
+/** A type query replaces the chips. Pins stay visible either way. */
+internal fun planesForFrame(
+    inView: List<VisiblePlane>,
+    chips: Set<TypeChip>,
+    focus: TypeMatch?,
+    pins: Set<String>,
+    favourites: Set<String>,
+): List<VisiblePlane> = when {
+    focus != null -> inView.filter { it.hex in pins || planeMatchesType(it, focus) }
+    chips.isEmpty() -> inView
+    else -> inView.filter { it.hex in pins || keepsPlane(chips, it.silhouette, it.hex in favourites) }
 }
 
 private fun padView(view: ViewBox): ViewBox {
@@ -641,15 +741,30 @@ private fun wrapLon(lon: Double): Double {
 
 /**
  * Below [GROUND_ZOOM], slow low traffic is hidden unless it is near an airport, where it is arrivals and departures.
- * Below [PLANE_CULL_ZOOM], a crowded view keeps one plane per grid cell. Pinned planes always stay.
+ * Helicopters and aircraft that have stopped emitting stay visible: a helicopter is low and slow away from big airports,
+ * and a resting fix is the place the flight shut down.
+ * Below [PLANE_CULL_ZOOM], a crowded view keeps one plane per grid cell. Pinned planes and helicopters always stay.
  */
 fun declutter(planes: List<VisiblePlane>, view: ViewBox, zoom: Double, pins: Set<String>, airports: AirportGrid): List<VisiblePlane> {
     val shown = if (zoom < GROUND_ZOOM) {
-        planes.filter { it.hex in pins || !isParked(it.altFt, it.gsKt) || airports.near(it.lat, it.lon, AIRPORT_TRAFFIC_NM) }
+        planes.filter { it.hex in pins || it.resting || isHelicopter(it.silhouette) || !isParked(it.altFt, it.gsKt) || airports.near(it.lat, it.lon, AIRPORT_TRAFFIC_NM) }
     } else {
         planes
     }
     return if (zoom < PLANE_CULL_ZOOM && shown.size >= THIN_FROM_PLANES) thin(shown, view, pins) else shown
+}
+
+internal fun isHelicopter(kind: Silhouette): Boolean =
+    kind == Silhouette.HELI_LIGHT || kind == Silhouette.HELI_MEDIUM || kind == Silhouette.HELI_HEAVY
+
+private fun describeHit(plane: VisiblePlane): String {
+    val state = when {
+        plane.resting -> "resting"
+        isHelicopter(plane.silhouette) -> "helicopter"
+        else -> "live"
+    }
+    val id = listOf(plane.typeCode, plane.reg).filter { it.isNotBlank() }.joinToString(" · ")
+    return if (id.isEmpty()) state else "$id · $state"
 }
 
 private fun thin(planes: List<VisiblePlane>, view: ViewBox, pins: Set<String>): List<VisiblePlane> {
@@ -661,7 +776,7 @@ private fun thin(planes: List<VisiblePlane>, view: ViewBox, pins: Set<String>): 
     val cells = HashMap<Long, VisiblePlane>(288)
     val pinned = ArrayList<VisiblePlane>(4)
     for (plane in planes) {
-        if (plane.hex in pins) {
+        if (plane.hex in pins || isHelicopter(plane.silhouette)) {
             pinned.add(plane)
             continue
         }

@@ -41,6 +41,17 @@ fun silhouetteFor(typeCode: String?, emitterCategory: String?): Silhouette {
     return categoryFallback(emitterCategory)
 }
 
+/** True when [code] is an ICAO type we draw, or a prefix of one, such as B73 or B738. */
+internal fun looksLikeTypeCode(code: String): Boolean {
+    val upper = code.trim().uppercase(Locale.US)
+    if (upper.length < 2) return false
+    if (exact.containsKey(upper)) return true
+    for ((prefix, _) in prefixes) {
+        if (upper.startsWith(prefix) || prefix.startsWith(upper)) return true
+    }
+    return false
+}
+
 fun categoryFallback(emitterCategory: String?): Silhouette {
     return when (emitterCategory?.trim()?.uppercase(Locale.US)) {
         "A5", "A4" -> Silhouette.WIDE_BODY

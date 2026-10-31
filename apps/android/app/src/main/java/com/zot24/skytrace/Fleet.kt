@@ -36,6 +36,8 @@ data class VisiblePlane(
     val lon: Double,
     val opacity: Float,
     val silhouette: Silhouette,
+    /** Last fix, held in place. The aircraft stopped emitting. */
+    val resting: Boolean = false,
 )
 
 fun project(lat0: Double, lon0: Double, gsKt: Double, trackDeg: Double, dtSec: Double): Pair<Double, Double> {
@@ -63,10 +65,21 @@ internal data class Craft(
     val anchorAtMs: Long,
 )
 
+internal const val REST_OPACITY = 0.55f
+internal const val REST_KEEP_MS = 18L * 60L * 60L * 1000L
+internal const val REST_CAP = 400
+
 class Fleet {
     private var craft = LinkedHashMap<String, Craft>()
+    private var resting = LinkedHashMap<String, Craft>()
+    private var kept = emptySet<String>()
     private val trails = HashMap<String, ArrayDeque<Pair<TrailPoint, Long>>>()
     private val deadScratch = ArrayList<String>(8)
+
+    /** Favourites stay on the map when the area feed no longer lists them, until their own poll says they went quiet. */
+    fun keep(ids: Set<String>) {
+        kept = ids
+    }
 
     fun accept(rows: List<PlaneRow>, now: Long, fresh: Boolean) {
         if (!fresh) {
@@ -79,43 +92,52 @@ class Fleet {
         for (row in rows) {
             if (row.hex.isEmpty()) continue
             seen.add(row.hex)
-            val existing = craft[row.hex]
-            if (existing == null) {
-                putNew(row, now)
-            } else {
-                val pose = pose(existing, now)
-                val merged = existing.row.copy(
-                    callsign = row.callsign.ifBlank { existing.row.callsign },
-                    lat = row.lat,
-                    lon = row.lon,
-                    altFt = row.altFt,
-                    gsKt = row.gsKt,
-                    trackDeg = row.trackDeg,
-                    typeCode = row.typeCode.ifBlank { existing.row.typeCode },
-                    reg = row.reg.ifBlank { existing.row.reg },
-                    category = row.category.ifBlank { existing.row.category },
-                )
-                craft[row.hex] = if (pose == null) {
-                    Craft(merged, fixOf(row, now), row.lat, row.lon, row.trackDeg, Long.MIN_VALUE)
-                } else {
-                    Craft(merged, fixOf(row, now), pose.lat, pose.lon, pose.trackDeg, now)
-                }
-            }
+            resting.remove(row.hex)
+            craft[row.hex] = absorb(craft[row.hex], row, now)
         }
         val gone = craft.keys.filter { it !in seen }
         for (hex in gone) {
+            val item = craft[hex] ?: continue
+            if (hex in kept) continue
             craft.remove(hex)
             trails.remove(hex)
+            if (isOnGround(item.row.altFt, item.row.gsKt)) resting[hex] = freeze(item)
         }
+        trimResting(now)
+    }
+
+    /**
+     * Updates only [rows], and parks [missing] at their last fix.
+     * An area poll must not use this: it would leave the rest of the sky in place, which is the point for favourites.
+     */
+    fun upsert(rows: List<PlaneRow>, now: Long, missing: Set<String>): Set<String> {
+        val parked = LinkedHashSet<String>()
+        for (row in rows) {
+            if (row.hex.isEmpty()) continue
+            val prior = craft[row.hex] ?: resting.remove(row.hex)
+            resting.remove(row.hex)
+            craft[row.hex] = absorb(prior, row, now)
+        }
+        for (hex in missing) {
+            val item = craft.remove(hex) ?: continue
+            trails.remove(hex)
+            resting[hex] = freeze(item)
+            parked.add(hex)
+        }
+        trimResting(now)
+        return parked
     }
 
     /** Main thread. A shallow copy, so a background merge never reads a map the frame loop is pruning. */
     internal fun snapshot(): Map<String, Craft> = HashMap(craft)
 
+    internal fun restingSnapshot(): Map<String, Craft> = HashMap(resting)
+
     /** Main thread. Swaps in a map built by [merge]. */
-    internal fun install(next: LinkedHashMap<String, Craft>) {
+    internal fun install(next: LinkedHashMap<String, Craft>, restingNext: LinkedHashMap<String, Craft>? = null) {
         craft = next
-        trails.keys.retainAll(next.keys)
+        if (restingNext != null) resting = restingNext
+        trails.keys.retainAll(craft.keys)
     }
 
     fun tracked(now: Long): Int {
@@ -124,6 +146,8 @@ class Fleet {
     }
 
     fun freshness(hex: String, now: Long): Freshness? = craft[hex]?.let { freshness(now - it.fixAtMs) }
+
+    fun fixAt(hex: String): Long? = craft[hex]?.fixAtMs ?: resting[hex]?.fixAtMs
 
     fun freshCount(now: Long): Int {
         prune(now)
@@ -139,10 +163,16 @@ class Fleet {
         alwaysHex: String? = null,
     ): List<VisiblePlane> {
         prune(now)
-        val out = ArrayList<VisiblePlane>(craft.size)
+        val out = ArrayList<VisiblePlane>(craft.size + resting.size)
         for (item in craft.values) {
             val pose = pose(item, now) ?: continue
             val keep = item.row.hex == alwaysHex || inside(pose.lon, pose.lat, south, north, west, east)
+            if (keep) out.add(pose)
+        }
+        for ((hex, item) in resting) {
+            if (hex in craft) continue
+            val pose = pose(item, now, resting = true) ?: continue
+            val keep = hex == alwaysHex || inside(pose.lon, pose.lat, south, north, west, east)
             if (keep) out.add(pose)
         }
         return out
@@ -151,13 +181,17 @@ class Fleet {
     /** Prunes once, then poses each hex. Calling one() per hex pruned the whole fleet every time. */
     fun snapshotFor(hexes: Set<String>, now: Long): List<VisiblePlane> {
         prune(now)
-        return hexes.mapNotNull { hex -> craft[hex]?.let { pose(it, now) } }
+        return hexes.mapNotNull { hex ->
+            craft[hex]?.let { pose(it, now) } ?: resting[hex]?.let { pose(it, now, resting = true) }
+        }
     }
 
     fun one(hex: String, now: Long): VisiblePlane? {
         prune(now)
-        val item = craft[hex] ?: return null
-        return pose(item, now)
+        val live = craft[hex]
+        if (live != null) return pose(live, now)
+        val parked = resting[hex] ?: return null
+        return pose(parked, now, resting = true)
     }
 
     private fun prune(now: Long) {
@@ -167,8 +201,23 @@ class Fleet {
         }
         for (index in deadScratch.indices) {
             val hex = deadScratch[index]
-            craft.remove(hex)
+            val item = craft.remove(hex) ?: continue
             trails.remove(hex)
+            if (hex in kept || isOnGround(item.row.altFt, item.row.gsKt)) resting[hex] = freeze(item)
+        }
+        trimResting(now)
+    }
+
+    private fun trimResting(now: Long) {
+        val it = resting.entries.iterator()
+        while (it.hasNext()) {
+            val entry = it.next()
+            if (entry.key in kept) continue
+            if (now - entry.value.fixAtMs >= REST_KEEP_MS) it.remove()
+        }
+        while (resting.size > REST_CAP) {
+            val oldest = resting.entries.firstOrNull { it.key !in kept } ?: break
+            resting.remove(oldest.key)
         }
     }
 
@@ -210,7 +259,23 @@ class Fleet {
     }
 }
 
-private fun pose(item: Craft, now: Long): VisiblePlane? {
+private fun pose(item: Craft, now: Long, resting: Boolean = false): VisiblePlane? {
+    if (resting) {
+        return VisiblePlane(
+            hex = item.row.hex,
+            callsign = item.row.callsign,
+            typeCode = item.row.typeCode,
+            reg = item.row.reg,
+            altFt = item.row.altFt,
+            gsKt = 0.0,
+            trackDeg = item.row.trackDeg,
+            lat = item.row.lat,
+            lon = item.row.lon,
+            opacity = REST_OPACITY,
+            silhouette = silhouetteFor(item.row.typeCode, item.row.category),
+            resting = true,
+        )
+    }
     val opacity = freshness(now - item.fixAtMs)?.opacity ?: return null
     val dt = (now - item.fixAtMs) / 1000.0
     val projected = project(item.row.lat, item.row.lon, item.row.gsKt, item.row.trackDeg, dt)
@@ -283,35 +348,69 @@ private fun splitAntimeridian(points: List<TrailPoint>): List<List<TrailPoint>> 
     return lines
 }
 
-/** Any thread. The fresh-poll half of [Fleet.accept], built from a [Fleet.snapshot]: same easing anchors, same drop rule. */
-internal fun merge(base: Map<String, Craft>, rows: List<PlaneRow>, now: Long): LinkedHashMap<String, Craft> {
-    val next = LinkedHashMap<String, Craft>(rows.size * 2)
+internal data class Merged(val live: LinkedHashMap<String, Craft>, val resting: LinkedHashMap<String, Craft>)
+
+/** Any thread. The fresh-poll half of [Fleet.accept], built from a [Fleet.snapshot]. */
+internal fun merge(
+    base: Map<String, Craft>,
+    rows: List<PlaneRow>,
+    now: Long,
+    keep: Set<String> = emptySet(),
+    resting: Map<String, Craft> = emptyMap(),
+): Merged {
+    val live = LinkedHashMap<String, Craft>(rows.size * 2)
+    val rest = LinkedHashMap(resting)
     for (row in rows) {
         if (row.hex.isEmpty()) continue
-        val existing = base[row.hex]
-        if (existing == null) {
-            next[row.hex] = Craft(row, fixOf(row, now), row.lat, row.lon, row.trackDeg, Long.MIN_VALUE)
+        val existing = base[row.hex] ?: rest.remove(row.hex)
+        live[row.hex] = absorb(existing, row, now)
+    }
+    for ((hex, item) in base) {
+        if (hex in live) continue
+        if (hex in keep) {
+            live[hex] = item
             continue
         }
-        val pose = pose(existing, now)
-        val merged = existing.row.copy(
-            callsign = row.callsign.ifBlank { existing.row.callsign },
-            lat = row.lat,
-            lon = row.lon,
-            altFt = row.altFt,
-            gsKt = row.gsKt,
-            trackDeg = row.trackDeg,
-            typeCode = row.typeCode.ifBlank { existing.row.typeCode },
-            reg = row.reg.ifBlank { existing.row.reg },
-            category = row.category.ifBlank { existing.row.category },
-        )
-        next[row.hex] = if (pose == null) {
-            Craft(merged, fixOf(row, now), row.lat, row.lon, row.trackDeg, Long.MIN_VALUE)
-        } else {
-            Craft(merged, fixOf(row, now), pose.lat, pose.lon, pose.trackDeg, now)
-        }
+        if (isOnGround(item.row.altFt, item.row.gsKt)) rest[hex] = freeze(item)
     }
-    return next
+    trimRestingMap(rest, now, keep)
+    return Merged(live, rest)
+}
+
+private fun absorb(existing: Craft?, row: PlaneRow, now: Long): Craft {
+    if (existing == null) return Craft(row, fixOf(row, now), row.lat, row.lon, row.trackDeg, Long.MIN_VALUE)
+    val posed = pose(existing, now)
+    val merged = existing.row.copy(
+        callsign = row.callsign.ifBlank { existing.row.callsign },
+        lat = row.lat,
+        lon = row.lon,
+        altFt = row.altFt,
+        gsKt = row.gsKt,
+        trackDeg = row.trackDeg,
+        typeCode = row.typeCode.ifBlank { existing.row.typeCode },
+        reg = row.reg.ifBlank { existing.row.reg },
+        category = row.category.ifBlank { existing.row.category },
+    )
+    return if (posed == null) {
+        Craft(merged, fixOf(row, now), row.lat, row.lon, row.trackDeg, Long.MIN_VALUE)
+    } else {
+        Craft(merged, fixOf(row, now), posed.lat, posed.lon, posed.trackDeg, now)
+    }
+}
+
+private fun freeze(item: Craft): Craft = item.copy(row = item.row.copy(gsKt = 0.0))
+
+private fun trimRestingMap(rest: LinkedHashMap<String, Craft>, now: Long, keep: Set<String>) {
+    val it = rest.entries.iterator()
+    while (it.hasNext()) {
+        val entry = it.next()
+        if (entry.key in keep) continue
+        if (now - entry.value.fixAtMs >= REST_KEEP_MS) it.remove()
+    }
+    while (rest.size > REST_CAP) {
+        val oldest = rest.entries.firstOrNull { it.key !in keep } ?: break
+        rest.remove(oldest.key)
+    }
 }
 
 /** The feed's own fix time when it gave one, never later than now. */

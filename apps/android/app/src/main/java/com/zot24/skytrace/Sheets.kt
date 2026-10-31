@@ -110,7 +110,11 @@ fun FlightSheet(vm: SkyViewModel, detail: PlaneDetail, favourite: Boolean) {
         val route = vm.route
         if (!expanded) {
             Text(route?.label ?: if (vm.routeLookedUp) "Route unknown" else "Looking up route…", color = if (route == null) SheetMuted else SheetPaper, fontSize = 13.sp, maxLines = 1)
-            SheetFact("Altitude", if (detail.onGround) "On ground" else detail.altitude)
+            SheetFact("Altitude", when {
+                detail.resting -> "Resting"
+                detail.onGround -> "On ground"
+                else -> detail.altitude
+            })
             SheetFact("Ground speed", detail.speed)
             if (detail.seen.isNotEmpty()) SheetFact("Position", detail.seen)
             return@SwipeSheet
@@ -124,7 +128,11 @@ fun FlightSheet(vm: SkyViewModel, detail: PlaneDetail, favourite: Boolean) {
             route.note?.let { Text(it, color = SheetMuted, fontSize = 11.sp) }
             Text(route.credit.line, color = SheetMuted, fontSize = 10.sp, modifier = Modifier.padding(bottom = 4.dp))
         }
-        SheetFact("Status", if (detail.onGround) "On ground" else "Flying")
+        SheetFact("Status", when {
+            detail.resting -> "Resting"
+            detail.onGround -> "On ground"
+            else -> "Flying"
+        })
         if (detail.seen.isNotEmpty()) SheetFact("Position", detail.seen)
         SheetFact("Type", detail.type)
         SheetFact("Registration", detail.reg)

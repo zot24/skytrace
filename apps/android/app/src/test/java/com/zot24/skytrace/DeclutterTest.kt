@@ -26,6 +26,26 @@ class DeclutterTest {
     }
 
     @Test
+    fun aHelicopterShowsAwayFromAirportsBelowGroundZoom() {
+        val heli = plane("heli", 29.5, -18.0, altFt = 500.0, gsKt = 90.0).copy(silhouette = Silhouette.HELI_LIGHT)
+        assertEquals(setOf("heli"), drawn(listOf(heli), 9.0))
+    }
+
+    @Test
+    fun aCrowdedViewKeepsHelicoptersAsWellAsOnePlanePerCell() {
+        val heli = plane("heli", 28.0, -16.0, altFt = 500.0, gsKt = 90.0).copy(silhouette = Silhouette.HELI_MEDIUM)
+        val ids = drawn(cluster(THIN_FROM_PLANES) + heli, 6.0)
+        assertEquals(true, "heli" in ids)
+        assertEquals(2, ids.size)
+    }
+
+    @Test
+    fun aRestingAircraftStaysVisibleAwayFromAirports() {
+        val rest = plane("rest", 29.5, -18.0, altFt = 0.0, gsKt = 0.0).copy(resting = true)
+        assertEquals(setOf("rest"), drawn(listOf(rest), 9.0))
+    }
+
+    @Test
     fun lowSlowTrafficShowsNearAnAirportAndHidesElsewhereBelowGroundZoom() {
         val approach = plane("near", 28.10, -16.60, altFt = 900.0, gsKt = 140.0)
         val parked = plane("apron", 28.045, -16.572, altFt = 0.0, gsKt = 0.0)
