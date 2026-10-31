@@ -12,13 +12,28 @@ android {
         applicationId = "com.zot24.skytrace"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
+        versionCode = (findProperty("versionCode") as? String)?.toIntOrNull() ?: 1
         versionName = "1.0.0"
+    }
+
+    // One shared debug certificate so a GitHub release can update the last one.
+    // Password is the public Android debug password. This is not a Play upload key.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = rootProject.file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 

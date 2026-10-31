@@ -9,7 +9,7 @@ on:
       - ".github/workflows/android-apk.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   debug-apk:
@@ -33,13 +33,21 @@ jobs:
           yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
           "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --install "platforms;android-35" "build-tools;35.0.0"
 
-      - name: Assemble debug APK
+      - name: Assemble release APK
         working-directory: apps/android
-        run: ./gradlew assembleDebug --stacktrace --no-daemon
+        run: ./gradlew assembleRelease --stacktrace --no-daemon -PversionCode=${{ github.run_number }}
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: skytrace-debug
-          path: apps/android/app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
-          retention-days: 14
+      - name: Publish the APK on a GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' apps/android/app/build.gradle.kts)
+          short="${GITHUB_SHA::7}"
+          tag="android-v${version}-${short}"
+          apk="skytrace-v${version}-${short}.apk"
+          cp apps/android/app/build/outputs/apk/release/app-release.apk "$apk"
+          gh release create "$tag" \
+            --target "$GITHUB_SHA" \
+            --title "Android v${version} (${short})" \
+            --notes "Install the .apk from this release. It is signed with the shared Skytrace debug key. If an older Skytrace is already installed and Android reports a signature problem, uninstall that copy once, then install this one. Later releases update over this one." \
+            "$apk"
